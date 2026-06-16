@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -86,7 +87,7 @@ func (s *Server) handleDiagnoseStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	envelope, alertName, severity := buildAlertEnvelope(kind, namespace, name)
+	envelope, alertName, severity := buildAlertEnvelope(kind, namespace, name, "user-initiated")
 	stream, err := s.opensreClient.InvestigateStream(r.Context(), opensre.InvestigateRequest{
 		RawAlert:     envelope,
 		AlertName:    alertName,
@@ -107,6 +108,7 @@ func (s *Server) handleDiagnoseStream(w http.ResponseWriter, r *http.Request) {
 		Name:      name,
 		Context:   k8s.GetContextName(),
 		CreatedAt: time.Now(),
+		Trigger:   "manual",
 		Status:    "streaming",
 	}
 	persisted := false
@@ -264,6 +266,58 @@ func (s *Server) handleListDiagnoses(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, s.diagnoses.list(kind, namespace, name))
 }
 
+// runHeadlessInvestigation runs an OpenSRE investigation without a browser
+// client (used by auto-diagnosis), accumulating the result into a persisted
+// record. reason/message, when set, seed the envelope's symptom from the
+// detecting issue. Returns the stored record.
+func (s *Server) runHeadlessInvestigation(ctx context.Context, kind, namespace, name, reason, message string) *DiagnosisRecord {
+	rec := &DiagnosisRecord{
+		ID:        newDiagnosisID(),
+		Kind:      kind,
+		Namespace: namespace,
+		Name:      name,
+		Context:   k8s.GetContextName(),
+		CreatedAt: time.Now(),
+		Trigger:   "auto",
+		Status:    "streaming",
+	}
+
+	envelope, alertName, severity := buildAlertEnvelope(kind, namespace, name, "radar-auto")
+	if reason != "" {
+		if sym, ok := envelope["symptom"].(map[string]any); ok {
+			sym["reason"] = reason
+			if message != "" {
+				sym["message"] = message
+			}
+		}
+	}
+
+	stream, err := s.opensreClient.InvestigateStream(ctx, opensre.InvestigateRequest{
+		RawAlert:     envelope,
+		AlertName:    alertName,
+		PipelineName: "radar",
+		Severity:     severity,
+	})
+	if err != nil {
+		rec.Status = "error"
+		rec.Error = err.Error()
+		s.diagnoses.put(rec)
+		return rec
+	}
+
+	for ev := range stream {
+		applyOpenSREFrame(rec, ev)
+	}
+	if rec.Status == "streaming" {
+		rec.Status = "done"
+		if rec.IsNoise {
+			rec.Status = "noise"
+		}
+	}
+	s.diagnoses.put(rec)
+	return rec
+}
+
 // handleGetDiagnosis returns one stored diagnosis by id.
 // GET /api/diagnoses/{id}
 func (s *Server) handleGetDiagnosis(w http.ResponseWriter, r *http.Request) {
@@ -281,7 +335,7 @@ func (s *Server) handleGetDiagnosis(w http.ResponseWriter, r *http.Request) {
 // chains, topology, logs, etc. are intentionally omitted — OpenSRE pulls those
 // on demand via Radar's MCP tools. Returns the envelope, a human alert name,
 // and a severity derived from the events.
-func buildAlertEnvelope(kind, namespace, name string) (map[string]any, string, string) {
+func buildAlertEnvelope(kind, namespace, name, detectedBy string) (map[string]any, string, string) {
 	events := recentEventsFor(kind, namespace, name, maxEnvelopeEvents)
 
 	severity := "warning"
@@ -312,7 +366,7 @@ func buildAlertEnvelope(kind, namespace, name string) (map[string]any, string, s
 		})
 	}
 
-	symptom := map[string]any{"detectedBy": "user-initiated"}
+	symptom := map[string]any{"detectedBy": detectedBy}
 	if reason != "" {
 		symptom["reason"] = reason
 		symptom["message"] = message

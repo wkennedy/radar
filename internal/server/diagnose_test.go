@@ -119,7 +119,7 @@ func TestHandleDiagnoseStream_RelaysOpenSREStream(t *testing.T) {
 }
 
 func TestBuildAlertEnvelope(t *testing.T) {
-	envelope, alertName, severity := buildAlertEnvelope("Pod", "payments", "api-7c9f")
+	envelope, alertName, severity := buildAlertEnvelope("Pod", "payments", "api-7c9f", "user-initiated")
 
 	if envelope["source"] != "radar" {
 		t.Errorf("source = %v, want radar", envelope["source"])

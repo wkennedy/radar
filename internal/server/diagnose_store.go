@@ -23,7 +23,8 @@ type DiagnosisRecord struct {
 	Name          string              `json:"name"`
 	Context       string              `json:"context,omitempty"`
 	CreatedAt     time.Time           `json:"createdAt"`
-	Status        string              `json:"status"` // done | noise | error | cancelled
+	Trigger       string              `json:"trigger,omitempty"` // manual | auto
+	Status        string              `json:"status"`            // done | noise | error | cancelled
 	RootCause     string              `json:"rootCause,omitempty"`
 	Report        string              `json:"report,omitempty"`
 	ValidityScore float64             `json:"validityScore,omitempty"`

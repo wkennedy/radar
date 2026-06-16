@@ -68,8 +68,13 @@ export function DiagnosesSection({
                 <StatusIcon status={rec.status} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm text-theme-text-primary">{summaryLine(rec)}</span>
-                  <span className="block text-xs text-theme-text-tertiary">
+                  <span className="flex items-center gap-1.5 text-xs text-theme-text-tertiary">
                     {new Date(rec.createdAt).toLocaleString()}
+                    {rec.trigger === 'auto' && (
+                      <span className="rounded bg-theme-elevated px-1 py-0.5 text-[10px] uppercase tracking-wide text-theme-text-secondary">
+                        auto
+                      </span>
+                    )}
                   </span>
                 </span>
               </button>

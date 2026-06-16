@@ -54,6 +54,10 @@ type AppConfig struct {
 	AuthConfig               auth.Config
 	OpenSREURL               string
 	OpenSREToken             string
+	AutoDiagnose             bool
+	AutoDiagnoseInterval     time.Duration
+	AutoDiagnoseCooldown     time.Duration
+	AutoDiagnoseMaxPerHour   int
 }
 
 // SetGlobals applies debug/test flags to global state.
@@ -202,6 +206,12 @@ func CreateServer(cfg AppConfig) *server.Server {
 		AuthConfig:   cfg.AuthConfig,
 		OpenSREURL:   cfg.OpenSREURL,
 		OpenSREToken: cfg.OpenSREToken,
+		AutoDiagnose: server.AutoDiagnoseConfig{
+			Enabled:    cfg.AutoDiagnose,
+			Interval:   cfg.AutoDiagnoseInterval,
+			Cooldown:   cfg.AutoDiagnoseCooldown,
+			MaxPerHour: cfg.AutoDiagnoseMaxPerHour,
+		},
 	}
 
 	if cfg.MCPEnabled {

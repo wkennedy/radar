@@ -121,6 +121,13 @@ func main() {
 	// without exposing it in `ps` output.
 	opensreURL := flag.String("opensre-url", os.Getenv("RADAR_OPENSRE_URL"), "OpenSRE service URL for the 'Diagnose with AI' action (e.g. http://opensre:8080) — empty = disabled. Env: RADAR_OPENSRE_URL")
 	opensreToken := flag.String("opensre-token", os.Getenv("RADAR_OPENSRE_TOKEN"), "OpenSRE API key, sent as the X-API-Key header. Env: RADAR_OPENSRE_TOKEN")
+	// Proactive auto-diagnosis: auto-fire OpenSRE investigations on new critical
+	// cluster issues. Off by default; requires --opensre-url. Conservative by
+	// design (critical only, owner-grouped, cooldown + hourly cap).
+	autoDiagnose := flag.Bool("opensre-autodiagnose", os.Getenv("RADAR_OPENSRE_AUTODIAGNOSE") == "true", "Auto-fire OpenSRE investigations on new critical cluster issues (off by default; requires --opensre-url). Env: RADAR_OPENSRE_AUTODIAGNOSE=true")
+	autoDiagnoseInterval := flag.Duration("opensre-autodiagnose-interval", 60*time.Second, "Auto-diagnosis poll cadence")
+	autoDiagnoseCooldown := flag.Duration("opensre-autodiagnose-cooldown", 30*time.Minute, "Suppress re-diagnosing the same issue/resource within this window")
+	autoDiagnoseMaxPerHour := flag.Int("opensre-autodiagnose-max-per-hour", 10, "Hard cap on auto-investigations launched per rolling hour")
 	flag.Parse()
 
 	// Cloud-mode: Radar runs inside a customer cluster and fronts Radar
@@ -228,6 +235,10 @@ func main() {
 		Version:                  version,
 		OpenSREURL:               *opensreURL,
 		OpenSREToken:             *opensreToken,
+		AutoDiagnose:             *autoDiagnose,
+		AutoDiagnoseInterval:     *autoDiagnoseInterval,
+		AutoDiagnoseCooldown:     *autoDiagnoseCooldown,
+		AutoDiagnoseMaxPerHour:   *autoDiagnoseMaxPerHour,
 		AuthConfig: auth.Config{
 			Mode:                      *authMode,
 			Secret:                    *authSecret,

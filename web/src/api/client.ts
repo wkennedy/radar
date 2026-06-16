@@ -1647,6 +1647,7 @@ export interface DiagnosisRecord {
   name: string
   context?: string
   createdAt: string
+  trigger?: 'manual' | 'auto' | string
   status: 'done' | 'noise' | 'error' | 'cancelled' | string
   rootCause?: string
   report?: string

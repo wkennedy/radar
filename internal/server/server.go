@@ -69,6 +69,7 @@ type Server struct {
 	saveFileFunc    func(defaultFilename string, data []byte) (string, error)
 	opensreClient   *opensre.Client // OpenSRE "Diagnose with AI" trigger; always non-nil, may be unconfigured
 	diagnoses       *diagnoseStore  // persisted "Diagnose with AI" results (in-memory, bounded)
+	autoDiag        *autoDiagnoser  // proactive auto-diagnosis poller; nil unless enabled + OpenSRE configured
 
 	// nsPreferences holds each user's active-namespace pick from the in-app
 	// switcher. Key shape: "<username>\x00<contextName>" when auth is enabled,
@@ -97,15 +98,16 @@ type Server struct {
 // Config holds server configuration
 type Config struct {
 	Port            int
-	DevMode         bool           // Serve frontend from filesystem instead of embedded
-	StaticFS        embed.FS       // Embedded frontend files
-	StaticRoot      string         // Path within StaticFS
-	MCPHandler      http.Handler   // MCP server handler (nil = MCP disabled)
-	DiagConfig      *DiagConfig    // Sanitized config for diagnostics endpoint
-	EffectiveConfig *config.Config // Running startup config for GET /api/config
-	AuthConfig      auth.Config    // Authentication configuration
-	OpenSREURL      string         // OpenSRE service URL for "Diagnose with AI" (empty = disabled)
-	OpenSREToken    string         // OpenSRE API key (sent as X-API-Key)
+	DevMode         bool               // Serve frontend from filesystem instead of embedded
+	StaticFS        embed.FS           // Embedded frontend files
+	StaticRoot      string             // Path within StaticFS
+	MCPHandler      http.Handler       // MCP server handler (nil = MCP disabled)
+	DiagConfig      *DiagConfig        // Sanitized config for diagnostics endpoint
+	EffectiveConfig *config.Config     // Running startup config for GET /api/config
+	AuthConfig      auth.Config        // Authentication configuration
+	OpenSREURL      string             // OpenSRE service URL for "Diagnose with AI" (empty = disabled)
+	OpenSREToken    string             // OpenSRE API key (sent as X-API-Key)
+	AutoDiagnose    AutoDiagnoseConfig // Proactive auto-diagnosis on critical issues (off by default)
 }
 
 // New creates a new server instance
@@ -187,6 +189,13 @@ func New(cfg Config) *Server {
 		if err == nil {
 			s.staticFS = subFS
 		}
+	}
+
+	// Auto-diagnosis needs OpenSRE; only wire the poller when both are set.
+	if cfg.AutoDiagnose.Enabled && s.opensreClient.IsConfigured() {
+		s.autoDiag = newAutoDiagnoser(s, cfg.AutoDiagnose)
+	} else if cfg.AutoDiagnose.Enabled {
+		log.Printf("[autodiagnose] requested but OpenSRE is not configured (--opensre-url/--opensre-token); disabled")
 	}
 
 	s.setupRoutes()
@@ -593,6 +602,9 @@ func (s *Server) Start() error {
 // is accepting connections. If port is 0, an OS-assigned port is used.
 func (s *Server) StartWithReady(ready chan<- struct{}) error {
 	s.broadcaster.Start()
+	if s.autoDiag != nil {
+		s.autoDiag.start()
+	}
 
 	addr := fmt.Sprintf(":%d", s.port)
 	ln, err := net.Listen("tcp", addr)
@@ -646,6 +658,9 @@ func (s *Server) Handler() http.Handler {
 // Stop gracefully stops the server and releases the listening port.
 func (s *Server) Stop() {
 	StopAllLocalTermSessions()
+	if s.autoDiag != nil {
+		s.autoDiag.stop()
+	}
 	s.broadcaster.Stop()
 	if s.listener != nil {
 		s.listener.Close()
