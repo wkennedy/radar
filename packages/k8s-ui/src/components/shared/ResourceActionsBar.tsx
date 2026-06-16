@@ -14,6 +14,7 @@ import {
   GitCompare,
   Code,
   FileCode2,
+  Sparkles,
   X,
 } from 'lucide-react'
 import { createTwoFilesPatch } from 'diff'
@@ -54,6 +55,12 @@ interface ResourceActionsBarProps {
   canExec?: boolean
   canViewLogs?: boolean
   canPortForward?: boolean
+
+  // OpenSRE "Diagnose with AI" (injected by platform). Renders a button when
+  // both onDiagnose and canDiagnoseWithAI are provided.
+  onDiagnose?: (params: { kind: string; namespace: string; name: string }) => void
+  canDiagnoseWithAI?: boolean
+  isDiagnosing?: boolean
 
   // Dock actions (injected by platform)
   onOpenTerminal?: (params: { namespace: string; podName: string; containerName: string; containers: string[] }) => void
@@ -127,6 +134,7 @@ export function ResourceActionsBar({
   onCompareTo,
   onCompareAcrossClusters,
   canExec, canViewLogs, canPortForward,
+  onDiagnose, canDiagnoseWithAI, isDiagnosing,
   onOpenTerminal, onOpenLogs: openLogs, onOpenWorkloadLogs: openWorkloadLogs, onCopyCommand,
   renderPortForward,
   onDelete, isDeleting, cascadeDependents, cascadeLoading,
@@ -490,6 +498,18 @@ export function ResourceActionsBar({
 
       {/* Spacer pushes universal actions to the right */}
       <div className="flex-1" />
+
+      {onDiagnose && canDiagnoseWithAI && (
+        <button
+          onClick={() => onDiagnose({ kind: resource.kind, namespace: resource.namespace, name: resource.name })}
+          disabled={isDiagnosing}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors border border-theme-border text-theme-text-primary hover:bg-theme-hover disabled:opacity-50"
+          title="Investigate this resource with OpenSRE AI SRE"
+        >
+          <Sparkles className={clsx('w-3.5 h-3.5', isDiagnosing && 'animate-pulse')} />
+          {isDiagnosing ? 'Diagnosing…' : 'Diagnose with AI'}
+        </button>
+      )}
 
       {/* Universal actions (right-aligned) */}
       {onToggleYaml && (

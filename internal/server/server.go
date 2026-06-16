@@ -38,6 +38,7 @@ import (
 	"github.com/skyhook-io/radar/internal/images"
 	"github.com/skyhook-io/radar/internal/k8s"
 	"github.com/skyhook-io/radar/internal/opencost"
+	"github.com/skyhook-io/radar/internal/opensre"
 	prometheuspkg "github.com/skyhook-io/radar/internal/prometheus"
 	"github.com/skyhook-io/radar/internal/settings"
 	"github.com/skyhook-io/radar/internal/timeline"
@@ -66,6 +67,7 @@ type Server struct {
 	permCache       *auth.PermissionCache
 	oidcHandler     *auth.OIDCHandler
 	saveFileFunc    func(defaultFilename string, data []byte) (string, error)
+	opensreClient   *opensre.Client // OpenSRE "Diagnose with AI" trigger; always non-nil, may be unconfigured
 
 	// nsPreferences holds each user's active-namespace pick from the in-app
 	// switcher. Key shape: "<username>\x00<contextName>" when auth is enabled,
@@ -101,6 +103,8 @@ type Config struct {
 	DiagConfig      *DiagConfig    // Sanitized config for diagnostics endpoint
 	EffectiveConfig *config.Config // Running startup config for GET /api/config
 	AuthConfig      auth.Config    // Authentication configuration
+	OpenSREURL      string         // OpenSRE service URL for "Diagnose with AI" (empty = disabled)
+	OpenSREToken    string         // OpenSRE API key (sent as X-API-Key)
 }
 
 // New creates a new server instance
@@ -119,6 +123,7 @@ func New(cfg Config) *Server {
 		authConfig:      cfg.AuthConfig,
 		topoMemo:        topology.NewMemoizer(5 * time.Second),
 		rbacMemo:        rbac.NewMemoizer(5 * time.Second),
+		opensreClient:   opensre.NewClient(cfg.OpenSREURL, cfg.OpenSREToken),
 	}
 
 	// Register a single context-switch callback so every PerformContextSwitch
@@ -253,6 +258,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/local-terminal", s.handleLocalTerminal)
 		r.Get("/pods/{namespace}/{name}/files/download", s.handlePodFileDownload)
 		r.Get("/workloads/{kind}/{namespace}/{name}/logs/stream", s.handleWorkloadLogsStream)
+		r.Get("/diagnose/stream", s.handleDiagnoseStream)
 
 		// Node drain — outside 60s timeout group (drain may need minutes for PDB backoff)
 		r.Post("/nodes/{name}/drain", s.handleDrainNode)
@@ -725,6 +731,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 	}
 
 	caps.MCPEnabled = s.mcpHandler != nil
+	caps.OpenSREEnabled = s.opensreClient.IsConfigured()
 	caps.Deployment = k8s.DeploymentInfo{Mode: deploymentMode()}
 	caps.AuthEnabled = s.authConfig.Enabled()
 	if user := auth.UserFromContext(r.Context()); user != nil {

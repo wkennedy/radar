@@ -38,6 +38,7 @@ import { RightsizingStrip } from '../resource/RightsizingStrip'
 import { useResourceAudit, useResources } from '../../api/client'
 import { AuditAlerts } from '@skyhook-io/k8s-ui'
 import { WorkloadLogsViewer } from '../logs/WorkloadLogsViewer'
+import { useDiagnoseLauncher } from '../diagnose/DiagnosePanel'
 import { LogsViewer } from '../logs/LogsViewer'
 import { useCanUpdateSecrets, useCanNodeWrite, useNamespacedCapabilities } from '../../contexts/CapabilitiesContext'
 import { useOpenTerminal, useOpenLogs, useOpenWorkloadLogs, useOpenNodeTerminal } from '../dock'
@@ -424,9 +425,17 @@ export function WorkloadView({
     // pass one.
     group: rest.group || resourceGroup || undefined,
   })
+  const diagnose = useDiagnoseLauncher()
   const actionsBarProps = useMemo(
-    () => ({ ...baseActionsBarProps, onCompareTo, onCompareAcrossClusters }),
-    [baseActionsBarProps, onCompareTo, onCompareAcrossClusters],
+    () => ({
+      ...baseActionsBarProps,
+      onCompareTo,
+      onCompareAcrossClusters,
+      onDiagnose: diagnose.onDiagnose,
+      canDiagnoseWithAI: diagnose.canDiagnoseWithAI,
+      isDiagnosing: diagnose.isDiagnosing,
+    }),
+    [baseActionsBarProps, onCompareTo, onCompareAcrossClusters, diagnose.onDiagnose, diagnose.canDiagnoseWithAI, diagnose.isDiagnosing],
   )
 
   const handleUpdateResource = useCallback(async (params: { kind: string; namespace: string; name: string; yaml: string }) => {
@@ -542,6 +551,7 @@ export function WorkloadView({
       }}
     />
     {comparePicker}
+    {diagnose.panel}
     </>
   )
 }

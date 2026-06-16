@@ -1621,6 +1621,18 @@ export function createLogStream(
   })
 }
 
+// Create SSE connection that triggers an OpenSRE "Diagnose with AI" investigation
+// for one resource and streams its progress/result frames. The backend relays
+// OpenSRE's SSE (event: events | done | error). Only meaningful when
+// capabilities.openSREEnabled is true.
+export function createDiagnoseStream(kind: string, namespace: string, name: string): EventSource {
+  const params = new URLSearchParams({ kind, name })
+  if (namespace) params.set('namespace', namespace)
+  return new EventSource(`${getApiBase()}/diagnose/stream?${params.toString()}`, {
+    withCredentials: getCredentialsMode() === 'include',
+  })
+}
+
 // ============================================================================
 // Port Forwarding
 // ============================================================================

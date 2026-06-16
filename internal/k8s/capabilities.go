@@ -83,6 +83,7 @@ type Capabilities struct {
 	NodeWrite      bool                     `json:"nodeWrite"`             // Can patch nodes (cordon/uncordon/drain)
 	WorkloadWrites WorkloadWritePermissions `json:"workloadWrites"`        // Can patch workload kinds (restart/scale controls)
 	MCPEnabled     bool                     `json:"mcpEnabled"`            // MCP server is running
+	OpenSREEnabled bool                     `json:"openSREEnabled"`        // OpenSRE "Diagnose with AI" trigger is configured
 	Deployment     DeploymentInfo           `json:"deployment"`            // How / where this Radar binary is running. Tells the UI which chrome to render or suppress (e.g. embedded mode hides the cluster headline + local-MCP card because the hub already renders both).
 	AuthEnabled    bool                     `json:"authEnabled,omitempty"` // Auth is enabled on the server
 	Username       string                   `json:"username,omitempty"`    // Authenticated username (when auth enabled)

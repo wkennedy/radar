@@ -52,6 +52,8 @@ type AppConfig struct {
 	Version                  string
 	MCPEnabled               bool
 	AuthConfig               auth.Config
+	OpenSREURL               string
+	OpenSREToken             string
 }
 
 // SetGlobals applies debug/test flags to global state.
@@ -197,7 +199,9 @@ func CreateServer(cfg AppConfig) *server.Server {
 			HasPrometheusURL:     cfg.PrometheusURL != "",
 			HasPrometheusHeaders: len(cfg.PrometheusHeaders) > 0,
 		},
-		AuthConfig: cfg.AuthConfig,
+		AuthConfig:   cfg.AuthConfig,
+		OpenSREURL:   cfg.OpenSREURL,
+		OpenSREToken: cfg.OpenSREToken,
 	}
 
 	if cfg.MCPEnabled {

@@ -91,6 +91,10 @@ export function useCanPortForward(): boolean {
   return useContext(CapabilitiesContext).portForward
 }
 
+export function useCanDiagnoseWithAI(): boolean {
+  return useContext(CapabilitiesContext).openSREEnabled ?? false
+}
+
 export function useCanViewSecrets(): boolean {
   return useContext(CapabilitiesContext).secrets
 }

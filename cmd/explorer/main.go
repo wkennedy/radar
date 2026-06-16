@@ -116,6 +116,11 @@ func main() {
 	firstPaintBackstop := flag.Duration("first-paint-backstop", k8s.EnvDurationOr("RADAR_FIRST_PAINT_BACKSTOP", 5*time.Minute), "Hard upper bound on the initial critical-cache sync wait before Radar falls through to partial-data render (default: 5m). Env: RADAR_FIRST_PAINT_BACKSTOP")
 	namespaceListTimeout := flag.Duration("namespace-list-timeout", k8s.EnvDurationOr("RADAR_NAMESPACE_LIST_TIMEOUT", 5*time.Second), "Timeout for the cluster-wide namespace LIST used to decide if the user is RBAC-namespace-restricted (default: 5s). Widen to 30s or more on slow control planes — a timeout here is misreported in the UI as 'Limited list — RBAC'. Env: RADAR_NAMESPACE_LIST_TIMEOUT")
 	maxScopeCandidates := flag.Int("max-scope-candidates", k8s.EnvIntOr("RADAR_MAX_SCOPE_CANDIDATES", 20), "Cap on the namespace-fallback probe fanout for users who can list namespaces cluster-wide but not list a specific kind cluster-wide (default: 20). Raise for clusters with more than 20 namespaces to avoid silently marking kinds as denied in dropped namespaces. Env: RADAR_MAX_SCOPE_CANDIDATES")
+	// OpenSRE "Diagnose with AI" trigger — empty = feature disabled (hidden in UI).
+	// Token falls back to an env var so deployments can source it from a Secret
+	// without exposing it in `ps` output.
+	opensreURL := flag.String("opensre-url", os.Getenv("RADAR_OPENSRE_URL"), "OpenSRE service URL for the 'Diagnose with AI' action (e.g. http://opensre:8080) — empty = disabled. Env: RADAR_OPENSRE_URL")
+	opensreToken := flag.String("opensre-token", os.Getenv("RADAR_OPENSRE_TOKEN"), "OpenSRE API key, sent as the X-API-Key header. Env: RADAR_OPENSRE_TOKEN")
 	flag.Parse()
 
 	// Cloud-mode: Radar runs inside a customer cluster and fronts Radar
@@ -221,6 +226,8 @@ func main() {
 		PrometheusHeadersFromEnv: promHeadersFromEnv.value(),
 		MCPEnabled:               mcpEnabled,
 		Version:                  version,
+		OpenSREURL:               *opensreURL,
+		OpenSREToken:             *opensreToken,
 		AuthConfig: auth.Config{
 			Mode:                      *authMode,
 			Secret:                    *authSecret,

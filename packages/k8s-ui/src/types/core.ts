@@ -68,6 +68,10 @@ export interface Capabilities {
   nodeWrite: boolean      // Node write operations (cordon, uncordon, drain)
   workloadWrites?: WorkloadWritePermissions // Workload patch permissions (restart/scale controls)
   mcpEnabled: boolean     // MCP server is running
+  // OpenSRE "Diagnose with AI" trigger is configured. Optional on the wire so a
+  // newer frontend doesn't crash against an older backend lacking the field —
+  // consumers default to false (feature hidden).
+  openSREEnabled?: boolean
   // How / where this Radar binary is running. Optional on the wire so a
   // newer frontend (e.g. radar-hub-web bundling a fresher @skyhook-io/radar-app)
   // doesn't crash against an older backend that hasn't shipped the field yet —
