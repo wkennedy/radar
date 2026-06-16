@@ -39,6 +39,7 @@ import { useResourceAudit, useResources } from '../../api/client'
 import { AuditAlerts } from '@skyhook-io/k8s-ui'
 import { WorkloadLogsViewer } from '../logs/WorkloadLogsViewer'
 import { useDiagnoseLauncher } from '../diagnose/DiagnosePanel'
+import { DiagnosesSection } from '../diagnose/DiagnosesSection'
 import { LogsViewer } from '../logs/LogsViewer'
 import { useCanUpdateSecrets, useCanNodeWrite, useNamespacedCapabilities } from '../../contexts/CapabilitiesContext'
 import { useOpenTerminal, useOpenLogs, useOpenWorkloadLogs, useOpenNodeTerminal } from '../dock'
@@ -526,6 +527,7 @@ export function WorkloadView({
       resolvedEnvFrom={resolvedEnvFrom}
       renderOverviewExtra={({ kind: k, namespace: ns, name: n }) => (
         <>
+          <DiagnosesSection kind={k} namespace={ns} name={n} onOpen={diagnose.openRecord} />
           <AuditSection kind={k} namespace={ns} name={n} />
           <FluxSourceConsumersSection kind={k} namespace={ns} name={n} />
         </>

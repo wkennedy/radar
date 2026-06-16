@@ -1633,6 +1633,44 @@ export function createDiagnoseStream(kind: string, namespace: string, name: stri
   })
 }
 
+// A persisted "Diagnose with AI" result. Mirrors DiagnosisRecord in
+// internal/server/diagnose_store.go.
+export interface DiagnosisEvidence {
+  tool?: string
+  source?: string
+  summary?: string
+}
+export interface DiagnosisRecord {
+  id: string
+  kind: string
+  namespace: string
+  name: string
+  context?: string
+  createdAt: string
+  status: 'done' | 'noise' | 'error' | 'cancelled' | string
+  rootCause?: string
+  report?: string
+  validityScore?: number
+  isNoise?: boolean
+  remediation?: string[]
+  evidence?: DiagnosisEvidence[]
+  error?: string
+}
+
+// usePastDiagnoses lists stored diagnoses for a resource (newest first).
+export function usePastDiagnoses(kind: string, namespace: string, name: string, enabled = true) {
+  return useQuery<DiagnosisRecord[]>({
+    queryKey: ['diagnoses', kind, namespace, name],
+    queryFn: () => {
+      const params = new URLSearchParams({ kind, name })
+      if (namespace) params.set('namespace', namespace)
+      return fetchJSON<DiagnosisRecord[]>(`/diagnoses?${params.toString()}`)
+    },
+    enabled: enabled && !!kind && !!name,
+    staleTime: 10_000,
+  })
+}
+
 // ============================================================================
 // Port Forwarding
 // ============================================================================

@@ -68,6 +68,7 @@ type Server struct {
 	oidcHandler     *auth.OIDCHandler
 	saveFileFunc    func(defaultFilename string, data []byte) (string, error)
 	opensreClient   *opensre.Client // OpenSRE "Diagnose with AI" trigger; always non-nil, may be unconfigured
+	diagnoses       *diagnoseStore  // persisted "Diagnose with AI" results (in-memory, bounded)
 
 	// nsPreferences holds each user's active-namespace pick from the in-app
 	// switcher. Key shape: "<username>\x00<contextName>" when auth is enabled,
@@ -124,6 +125,7 @@ func New(cfg Config) *Server {
 		topoMemo:        topology.NewMemoizer(5 * time.Second),
 		rbacMemo:        rbac.NewMemoizer(5 * time.Second),
 		opensreClient:   opensre.NewClient(cfg.OpenSREURL, cfg.OpenSREToken),
+		diagnoses:       newDiagnoseStore(500),
 	}
 
 	// Register a single context-switch callback so every PerformContextSwitch
@@ -276,6 +278,8 @@ func (s *Server) setupRoutes() {
 			r.Get("/dashboard/helm", s.handleDashboardHelm)
 			r.Get("/cluster-info", s.handleClusterInfo)
 			r.Get("/capabilities", s.handleCapabilities)
+			r.Get("/diagnoses", s.handleListDiagnoses)
+			r.Get("/diagnoses/{id}", s.handleGetDiagnosis)
 			r.Get("/topology", s.handleTopology)
 			r.Get("/gitops/tree/{kind}/{namespace}/{name}", s.handleGitOpsTree)
 			r.Get("/gitops/insights/{kind}/{namespace}/{name}", s.handleGitOpsInsights)
