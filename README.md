@@ -37,6 +37,7 @@ curl -fsSL https://get.radarhq.io | sh && kubectl radar
 - **Real-time** — watches your cluster via informers, pushes updates to the browser via SSE
 - **Works everywhere** — GKE, EKS, AKS, minikube, kind, k3s, or any conformant cluster
 - **AI-ready** — built-in [MCP server](docs/mcp.md) lets AI assistants query your cluster through Radar
+- **AI root-cause analysis** — [Diagnose with AI](docs/opensre.md) hands a workload, namespace, or cluster to OpenSRE and streams the RCA report into the UI
 - **In-cluster option** — deploy with Helm for shared team access with RBAC-scoped permissions
 
 ---
