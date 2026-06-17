@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/skyhook-io/radar/internal/opensre"
 )
 
 // mockOpenSRE returns an httptest server that emits a short OpenSRE-style SSE
@@ -215,5 +217,63 @@ func TestHandleDiagnoseStream_PersistsAndServesHistory(t *testing.T) {
 	srv.handleGetDiagnosis(missRec, missReq)
 	if missRec.Code != http.StatusNotFound {
 		t.Errorf("unknown id status = %d, want 404", missRec.Code)
+	}
+}
+
+func TestHandleDiagnoseChat(t *testing.T) {
+	var gotBody opensre.ChatRequest
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"reply":"It OOMed because the memory limit was 32Mi."}`)
+	}))
+	defer mock.Close()
+
+	srv := New(Config{DevMode: true, OpenSREURL: mock.URL, OpenSREToken: "k"})
+	srv.diagnoses.put(&DiagnosisRecord{
+		ID: "d1", Kind: "Deployment", Namespace: "ns", Name: "web",
+		RootCause: "OOMKilled", Report: "## RCA", Status: "done",
+	})
+
+	body := `{"id":"d1","message":"why did it oom?","history":[{"role":"user","content":"q"},{"role":"assistant","content":"a"}]}`
+	rec := httptest.NewRecorder()
+	srv.handleDiagnoseChat(rec, httptest.NewRequest(http.MethodPost, "/api/diagnose/chat", strings.NewReader(body)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || resp["reply"] == "" {
+		t.Fatalf("bad reply response: %v / %v", err, resp)
+	}
+	// The stored record grounded the request, and the thread was forwarded.
+	if gotBody.Context.RootCause != "OOMKilled" || gotBody.Context.Report != "## RCA" {
+		t.Errorf("context not grounded from record: %+v", gotBody.Context)
+	}
+	if len(gotBody.History) != 2 || gotBody.Message != "why did it oom?" {
+		t.Errorf("message/history not forwarded: msg=%q history=%d", gotBody.Message, len(gotBody.History))
+	}
+}
+
+func TestHandleDiagnoseChat_Errors(t *testing.T) {
+	srv := New(Config{DevMode: true, OpenSREURL: "http://127.0.0.1:9099", OpenSREToken: "k"})
+	srv.diagnoses.put(&DiagnosisRecord{ID: "d1", Kind: "Deployment", Namespace: "ns", Name: "web", Status: "done"})
+
+	// Empty message → 400.
+	rec := httptest.NewRecorder()
+	srv.handleDiagnoseChat(rec, httptest.NewRequest(http.MethodPost, "/api/diagnose/chat", strings.NewReader(`{"id":"d1","message":"  "}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("empty message status = %d, want 400", rec.Code)
+	}
+
+	// Unknown diagnosis id → 404.
+	rec = httptest.NewRecorder()
+	srv.handleDiagnoseChat(rec, httptest.NewRequest(http.MethodPost, "/api/diagnose/chat", strings.NewReader(`{"id":"nope","message":"hi"}`)))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown id status = %d, want 404", rec.Code)
 	}
 }

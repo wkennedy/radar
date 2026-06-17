@@ -7,8 +7,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { Sparkles, X, Loader2, AlertTriangle, CheckCircle2, ChevronRight, ChevronDown } from 'lucide-react'
-import { createDiagnoseStream, type DiagnosisRecord, type DiagnosisEvidence } from '../../api/client'
+import { Sparkles, X, Loader2, AlertTriangle, CheckCircle2, ChevronRight, ChevronDown, MessageSquare } from 'lucide-react'
+import {
+  createDiagnoseStream,
+  sendDiagnoseChat,
+  type DiagnosisRecord,
+  type DiagnosisEvidence,
+  type DiagnoseChatTurn,
+} from '../../api/client'
 import { useCanDiagnoseWithAI } from '../../contexts/CapabilitiesContext'
 import { Markdown } from '../ui/Markdown'
 
@@ -254,6 +260,81 @@ function EvidenceTrail({ evidence }: { evidence: DiagnosisEvidence[] }) {
   )
 }
 
+// DiagnoseChat is a stateless follow-up thread for a stored diagnosis: the
+// browser holds the turns and replays them; the server grounds answers in the
+// record's RCA. Only rendered in record mode (we need a persisted id).
+function DiagnoseChat({ id }: { id: string }) {
+  const [turns, setTurns] = useState<DiagnoseChatTurn[]>([])
+  const [input, setInput] = useState('')
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const send = useCallback(async () => {
+    const q = input.trim()
+    if (!q || sending) return
+    setError(null)
+    setInput('')
+    const prior = turns
+    setTurns((t) => [...t, { role: 'user', content: q }])
+    setSending(true)
+    try {
+      const reply = await sendDiagnoseChat(id, q, prior)
+      setTurns((t) => [...t, { role: 'assistant', content: reply }])
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Follow-up failed.')
+    } finally {
+      setSending(false)
+    }
+  }, [id, input, sending, turns])
+
+  return (
+    <div className="rounded-md border border-theme-border">
+      <div className="flex items-center gap-1.5 border-b border-theme-border p-2 text-xs font-medium text-theme-text-secondary">
+        <MessageSquare className="w-3.5 h-3.5" /> Ask a follow-up
+      </div>
+      <div className="space-y-3 p-2">
+        {turns.map((t, i) => (
+          <div key={i}>
+            <div className="text-[10px] uppercase tracking-wide text-theme-text-tertiary">
+              {t.role === 'user' ? 'You' : 'OpenSRE'}
+            </div>
+            {t.role === 'assistant' ? (
+              <Markdown>{t.content}</Markdown>
+            ) : (
+              <div className="text-sm text-theme-text-primary">{t.content}</div>
+            )}
+          </div>
+        ))}
+        {sending && (
+          <div className="flex items-center gap-2 text-xs text-theme-text-tertiary">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Thinking…
+          </div>
+        )}
+        {error && <div className="text-xs text-red-400">{error}</div>}
+        <div className="flex gap-2">
+          <input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void send()
+            }}
+            placeholder="e.g. why did you rule out the database?"
+            disabled={sending}
+            className="flex-1 rounded-md border border-theme-border bg-theme-base px-2 py-1.5 text-sm text-theme-text-primary placeholder:text-theme-text-tertiary disabled:opacity-50"
+          />
+          <button
+            onClick={() => void send()}
+            disabled={sending || !input.trim()}
+            className="rounded-md border border-theme-border px-3 py-1.5 text-xs font-medium text-theme-text-primary hover:bg-theme-hover disabled:opacity-40"
+          >
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function DiagnosePanel({
   target,
   record,
@@ -342,6 +423,8 @@ function DiagnosePanel({
           )}
 
           {vm.evidence.length > 0 && <EvidenceTrail evidence={vm.evidence} />}
+
+          {record && record.status !== 'error' && record.report && <DiagnoseChat id={record.id} />}
         </div>
 
         <div className="flex items-center justify-between gap-2 p-4 border-t border-theme-border shrink-0">

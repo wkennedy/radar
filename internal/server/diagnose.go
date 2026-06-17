@@ -330,6 +330,47 @@ func (s *Server) handleGetDiagnosis(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, rec)
 }
 
+// handleDiagnoseChat answers a follow-up question about a stored diagnosis.
+// POST /api/diagnose/chat {id, message, history}. Stateless: the browser holds
+// the thread and replays prior turns; the server grounds the answer in the
+// stored record's root cause + report. Outside the 60s middleware group because
+// a local LLM reply can take longer.
+func (s *Server) handleDiagnoseChat(w http.ResponseWriter, r *http.Request) {
+	if !s.opensreClient.IsConfigured() {
+		s.writeError(w, http.StatusNotFound, "OpenSRE is not configured")
+		return
+	}
+	var body struct {
+		ID      string             `json:"id"`
+		Message string             `json:"message"`
+		History []opensre.ChatTurn `json:"history"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(body.Message) == "" {
+		s.writeError(w, http.StatusBadRequest, "message is required")
+		return
+	}
+	rec, ok := s.diagnoses.get(body.ID)
+	if !ok {
+		s.writeError(w, http.StatusNotFound, "diagnosis not found")
+		return
+	}
+
+	reply, err := s.opensreClient.Chat(r.Context(), opensre.ChatRequest{
+		Message: body.Message,
+		Context: opensre.ChatContext{RootCause: rec.RootCause, Report: rec.Report},
+		History: body.History,
+	})
+	if err != nil {
+		s.writeError(w, http.StatusBadGateway, fmt.Sprintf("OpenSRE chat failed: %v", err))
+		return
+	}
+	s.writeJSON(w, map[string]string{"reply": reply})
+}
+
 // buildAlertEnvelope assembles the small Radar alert envelope (the OpenSRE
 // raw_alert payload) from the resource identity plus its recent events. Owner
 // chains, topology, logs, etc. are intentionally omitted — OpenSRE pulls those

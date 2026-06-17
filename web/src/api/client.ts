@@ -1658,6 +1658,38 @@ export interface DiagnosisRecord {
   error?: string
 }
 
+// A follow-up conversation turn for diagnosis chat.
+export interface DiagnoseChatTurn {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+// sendDiagnoseChat asks a follow-up question about a stored diagnosis. The
+// caller holds the thread and replays prior turns (the server is stateless).
+export async function sendDiagnoseChat(
+  id: string,
+  message: string,
+  history: DiagnoseChatTurn[],
+): Promise<string> {
+  const res = await apiFetch(`${getApiBase()}/diagnose/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, message, history }),
+  })
+  if (!res.ok) {
+    let detail = `chat failed (${res.status})`
+    try {
+      const body = await res.json()
+      if (body?.error) detail = String(body.error)
+    } catch {
+      /* keep default */
+    }
+    throw new Error(detail)
+  }
+  const data = (await res.json()) as { reply?: string }
+  return data.reply ?? ''
+}
+
 // usePastDiagnoses lists stored diagnoses for a resource (newest first).
 export function usePastDiagnoses(kind: string, namespace: string, name: string, enabled = true) {
   return useQuery<DiagnosisRecord[]>({

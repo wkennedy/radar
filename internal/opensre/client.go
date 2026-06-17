@@ -67,6 +67,63 @@ type StreamEvent struct {
 	Data  []byte
 }
 
+// ChatTurn is one prior message in a follow-up conversation.
+type ChatTurn struct {
+	Role    string `json:"role"` // user | assistant
+	Content string `json:"content"`
+}
+
+// ChatContext grounds a follow-up in a completed investigation.
+type ChatContext struct {
+	AlertName string `json:"alert_name,omitempty"`
+	RootCause string `json:"root_cause,omitempty"`
+	ProblemMD string `json:"problem_md,omitempty"`
+	Report    string `json:"report,omitempty"`
+}
+
+// ChatRequest is the OpenSRE /chat request body.
+type ChatRequest struct {
+	Message string      `json:"message"`
+	Context ChatContext `json:"context"`
+	History []ChatTurn  `json:"history,omitempty"`
+}
+
+// Chat asks OpenSRE a follow-up question grounded in a completed investigation.
+// Stateless: the caller supplies the RCA context + prior turns. Returns the
+// assistant's reply.
+func (c *Client) Chat(ctx context.Context, reqBody ChatRequest) (string, error) {
+	if !c.IsConfigured() {
+		return "", fmt.Errorf("OpenSRE is not configured")
+	}
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("marshal chat request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat", bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("build chat request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("call OpenSRE: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return "", fmt.Errorf("OpenSRE returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	var out struct {
+		Reply string `json:"reply"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", fmt.Errorf("decode chat response: %w", err)
+	}
+	return out.Reply, nil
+}
+
 // InvestigateStream POSTs the request to OpenSRE /investigate/stream and returns
 // a channel of parsed SSE frames. The channel closes when the stream ends, the
 // context is cancelled, or an error occurs (errors are surfaced via the return

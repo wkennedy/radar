@@ -270,6 +270,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/pods/{namespace}/{name}/files/download", s.handlePodFileDownload)
 		r.Get("/workloads/{kind}/{namespace}/{name}/logs/stream", s.handleWorkloadLogsStream)
 		r.Get("/diagnose/stream", s.handleDiagnoseStream)
+		r.Post("/diagnose/chat", s.handleDiagnoseChat) // follow-up Q&A; LLM reply may exceed the 60s API timeout
 
 		// Node drain — outside 60s timeout group (drain may need minutes for PDB backoff)
 		r.Post("/nodes/{name}/drain", s.handleDrainNode)
