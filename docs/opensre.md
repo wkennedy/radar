@@ -22,6 +22,7 @@ action appears on workloads and on the dashboard.
 | `--opensre-autodiagnose-max-per-hour`                        | Hard cap on auto-investigations per rolling hour (default `10`).               |
 | `--opensre-remediation` (`RADAR_OPENSRE_REMEDIATION=true`)   | Offer **restart/scale** fixes on diagnoses, applied with confirmation.         |
 | `--notify-webhook` (`RADAR_NOTIFY_WEBHOOK`)                  | POST a summary to a Slack-compatible webhook when a diagnosis completes.       |
+| `--opensre-notify` (`RADAR_OPENSRE_NOTIFY=true`)            | Publish completed diagnoses via OpenSRE's own delivery (Telegram, etc.).       |
 | `--radar-base-url` (`RADAR_BASE_URL`)                        | External base URL used for deep links in notifications.                        |
 
 ## Setup
@@ -87,6 +88,20 @@ kubectl-radar ... --notify-webhook https://hooks.slack.com/services/... \
 
 When a diagnosis completes (manual or auto), Radar POSTs a summary with a deep
 link back to the resource. The payload is Slack-incoming-webhook compatible.
+
+### Publish via OpenSRE (Telegram, etc.)
+
+```bash
+kubectl-radar ... --opensre-notify
+```
+
+Instead of (or alongside) the Radar webhook, route completed diagnoses through
+**OpenSRE's own delivery layer**, reusing the channels OpenSRE already supports —
+**Telegram** in v1. Radar sends the diagnosis + deep link to OpenSRE's `/publish`
+endpoint; OpenSRE formats and delivers it. The channel credentials live on the
+**OpenSRE** side (it reads `TELEGRAM_BOT_TOKEN` / `TELEGRAM_DEFAULT_CHAT_ID`), so
+Radar never holds them. `is_noise` and failed diagnoses are suppressed; delivery
+is best-effort and never blocks. Off by default; requires `--opensre-url`.
 
 ## Remediation (optional, off by default)
 

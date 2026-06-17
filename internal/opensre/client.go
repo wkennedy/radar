@@ -225,6 +225,64 @@ func (c *Client) Feedback(ctx context.Context, reqBody FeedbackRequest) error {
 	return nil
 }
 
+// PublishRequest asks OpenSRE to deliver a completed diagnosis to one of its
+// configured channels (Telegram in v1). Radar owns the deep link; OpenSRE owns
+// the channel credentials.
+type PublishRequest struct {
+	Channel       string   `json:"channel,omitempty"`
+	RootCause     string   `json:"root_cause,omitempty"`
+	Report        string   `json:"report,omitempty"`
+	Kind          string   `json:"kind,omitempty"`
+	Namespace     string   `json:"namespace,omitempty"`
+	Name          string   `json:"name,omitempty"`
+	ResourceURL   string   `json:"resource_url,omitempty"`
+	ValidityScore *float64 `json:"validity_score,omitempty"`
+	IsNoise       bool     `json:"is_noise,omitempty"`
+	Trigger       string   `json:"trigger,omitempty"`
+}
+
+// PublishResult is OpenSRE's /publish response: whether it delivered and, if
+// not, why (noise suppressed / channel not configured / send error).
+type PublishResult struct {
+	Published bool   `json:"published"`
+	Channel   string `json:"channel"`
+	Reason    string `json:"reason"`
+}
+
+// Publish routes a completed diagnosis through OpenSRE's delivery layer. Best-
+// effort: call asynchronously and tolerate errors. A successful HTTP call with
+// Published=false (e.g. channel not configured) is not an error.
+func (c *Client) Publish(ctx context.Context, reqBody PublishRequest) (PublishResult, error) {
+	if !c.IsConfigured() {
+		return PublishResult{}, fmt.Errorf("OpenSRE is not configured")
+	}
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return PublishResult{}, fmt.Errorf("marshal publish request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/publish", bytes.NewReader(payload))
+	if err != nil {
+		return PublishResult{}, fmt.Errorf("build publish request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return PublishResult{}, fmt.Errorf("call OpenSRE: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return PublishResult{}, fmt.Errorf("OpenSRE returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	var out PublishResult
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return PublishResult{}, fmt.Errorf("decode publish response: %w", err)
+	}
+	return out, nil
+}
+
 // InvestigateStream POSTs the request to OpenSRE /investigate/stream and returns
 // a channel of parsed SSE frames. The channel closes when the stream ends, the
 // context is cancelled, or an error occurs (errors are surfaced via the return

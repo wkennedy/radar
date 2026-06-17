@@ -135,6 +135,10 @@ func main() {
 	// diagnosis, executed via Radar's RBAC-enforced endpoints with confirmation.
 	// Off by default; requires --opensre-url. Env: RADAR_OPENSRE_REMEDIATION=true
 	opensreRemediation := flag.Bool("opensre-remediation", os.Getenv("RADAR_OPENSRE_REMEDIATION") == "true", "Offer OpenSRE remediation suggestions (restart/scale) on diagnoses, applied with confirmation via Radar's RBAC-checked workload endpoints (off by default; requires --opensre-url). Env: RADAR_OPENSRE_REMEDIATION=true")
+	// Route completed diagnoses through OpenSRE's own delivery layer (Telegram,
+	// etc.) on top of / instead of the Radar --notify-webhook. Off by default;
+	// requires --opensre-url. Env: RADAR_OPENSRE_NOTIFY=true
+	opensreNotify := flag.Bool("opensre-notify", os.Getenv("RADAR_OPENSRE_NOTIFY") == "true", "Publish completed diagnoses via OpenSRE's delivery layer (e.g. Telegram, configured on the OpenSRE side) (off by default; requires --opensre-url). Env: RADAR_OPENSRE_NOTIFY=true")
 	flag.Parse()
 
 	// Cloud-mode: Radar runs inside a customer cluster and fronts Radar
@@ -249,6 +253,7 @@ func main() {
 		NotifyWebhook:            *notifyWebhook,
 		RadarBaseURL:             *radarBaseURL,
 		OpenSRERemediation:       *opensreRemediation,
+		OpenSRENotify:            *opensreNotify,
 		AuthConfig: auth.Config{
 			Mode:                      *authMode,
 			Secret:                    *authSecret,

@@ -61,6 +61,7 @@ type AppConfig struct {
 	NotifyWebhook            string
 	RadarBaseURL             string
 	OpenSRERemediation       bool
+	OpenSRENotify            bool
 }
 
 // SetGlobals applies debug/test flags to global state.
@@ -218,6 +219,7 @@ func CreateServer(cfg AppConfig) *server.Server {
 		NotifyWebhook:      cfg.NotifyWebhook,
 		RadarBaseURL:       cfg.RadarBaseURL,
 		OpenSRERemediation: cfg.OpenSRERemediation,
+		OpenSRENotify:      cfg.OpenSRENotify,
 	}
 
 	if cfg.MCPEnabled {

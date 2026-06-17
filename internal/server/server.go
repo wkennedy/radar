@@ -113,12 +113,14 @@ type Config struct {
 	NotifyWebhook      string             // Outbound webhook for completed diagnoses (Slack-compatible; empty = off)
 	RadarBaseURL       string             // External base URL for deep links in notifications (empty = http://localhost:<port>)
 	OpenSRERemediation bool               // Enable "Apply fix" remediation suggestions (off by default)
+	OpenSRENotify      bool               // Publish completed diagnoses via OpenSRE's delivery layer (Telegram/…; off by default)
 }
 
 // New creates a new server instance
 func New(cfg Config) *Server {
 	cfg.AuthConfig.Defaults()
 
+	opensreClient := opensre.NewClient(cfg.OpenSREURL, cfg.OpenSREToken)
 	s := &Server{
 		router:             chi.NewRouter(),
 		broadcaster:        NewSSEBroadcaster(),
@@ -131,9 +133,9 @@ func New(cfg Config) *Server {
 		authConfig:         cfg.AuthConfig,
 		topoMemo:           topology.NewMemoizer(5 * time.Second),
 		rbacMemo:           rbac.NewMemoizer(5 * time.Second),
-		opensreClient:      opensre.NewClient(cfg.OpenSREURL, cfg.OpenSREToken),
+		opensreClient:      opensreClient,
 		diagnoses:          newDiagnoseStore(500),
-		notify:             newNotifier(cfg.NotifyWebhook, cfg.RadarBaseURL, cfg.Port),
+		notify:             newNotifier(cfg.NotifyWebhook, cfg.RadarBaseURL, cfg.Port, opensreClient, cfg.OpenSRENotify),
 		remediationEnabled: cfg.OpenSRERemediation,
 	}
 

@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/skyhook-io/radar/internal/opensre"
 )
 
 // notifier posts a compact, Slack-incoming-webhook-compatible message when a
@@ -22,21 +24,35 @@ type notifier struct {
 	webhookURL string
 	baseURL    string // Radar external base URL for deep links
 	client     *http.Client
+
+	// opensrePublish routes completed diagnoses through OpenSRE's own delivery
+	// layer (Telegram/Slack/…) — Proposal 06 "option 2". Independent of the
+	// webhook above; either, both, or neither can be active.
+	opensre        *opensre.Client
+	opensrePublish bool
 }
 
-func newNotifier(webhookURL, baseURL string, port int) *notifier {
+func newNotifier(webhookURL, baseURL string, port int, opensreClient *opensre.Client, opensrePublish bool) *notifier {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if base == "" {
 		base = fmt.Sprintf("http://localhost:%d", port)
 	}
 	return &notifier{
-		webhookURL: strings.TrimSpace(webhookURL),
-		baseURL:    base,
-		client:     &http.Client{Timeout: 10 * time.Second},
+		webhookURL:     strings.TrimSpace(webhookURL),
+		baseURL:        base,
+		client:         &http.Client{Timeout: 10 * time.Second},
+		opensre:        opensreClient,
+		opensrePublish: opensrePublish,
 	}
 }
 
-func (n *notifier) enabled() bool { return n != nil && n.webhookURL != "" }
+func (n *notifier) opensrePublishEnabled() bool {
+	return n != nil && n.opensrePublish && n.opensre.IsConfigured()
+}
+
+func (n *notifier) enabled() bool {
+	return n != nil && (n.webhookURL != "" || n.opensrePublishEnabled())
+}
 
 func (n *notifier) deepLink(rec *DiagnosisRecord) string {
 	return fmt.Sprintf("%s/workload/%s/%s/%s",
@@ -55,12 +71,57 @@ func shouldNotify(rec *DiagnosisRecord) bool {
 	return rec.Status == "done" || rec.Status == "error"
 }
 
-// notify fires asynchronously; safe to call on any persisted record.
+// notify fires asynchronously; safe to call on any persisted record. The webhook
+// and OpenSRE-publish paths are independent and each gated separately.
 func (n *notifier) notify(rec *DiagnosisRecord) {
 	if !n.enabled() || !shouldNotify(rec) {
 		return
 	}
-	go n.send(rec)
+	if n.webhookURL != "" {
+		go n.send(rec)
+	}
+	if n.opensrePublishEnabled() {
+		go n.publishViaOpenSRE(rec)
+	}
+}
+
+// publishViaOpenSRE hands the completed diagnosis to OpenSRE's delivery layer,
+// threading the Radar deep link. Best-effort: errors are logged, never block.
+// is_noise is also suppressed OpenSRE-side; we skip early to save a round trip.
+func (n *notifier) publishViaOpenSRE(rec *DiagnosisRecord) {
+	if rec.IsNoise || rec.Status == "error" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var score *float64
+	if rec.ValidityScore > 0 {
+		s := rec.ValidityScore
+		score = &s
+	}
+	trigger := rec.Trigger
+	if trigger == "" {
+		trigger = "manual"
+	}
+	res, err := n.opensre.Publish(ctx, opensre.PublishRequest{
+		Channel:       "telegram",
+		RootCause:     rec.RootCause,
+		Report:        rec.Report,
+		Kind:          rec.Kind,
+		Namespace:     rec.Namespace,
+		Name:          rec.Name,
+		ResourceURL:   n.deepLink(rec),
+		ValidityScore: score,
+		Trigger:       trigger,
+	})
+	if err != nil {
+		log.Printf("[notify] OpenSRE publish failed for diagnosis %s: %v", rec.ID, err)
+		return
+	}
+	if !res.Published {
+		log.Printf("[notify] OpenSRE publish skipped for diagnosis %s: %s", rec.ID, res.Reason)
+	}
 }
 
 func (n *notifier) buildPayload(rec *DiagnosisRecord) map[string]any {
