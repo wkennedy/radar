@@ -17,6 +17,7 @@ import (
 
 	"github.com/skyhook-io/radar/internal/issues"
 	"github.com/skyhook-io/radar/internal/k8s"
+	"github.com/skyhook-io/radar/internal/opencost"
 	"github.com/skyhook-io/radar/internal/opensre"
 )
 
@@ -107,6 +108,20 @@ func (s *Server) handleDiagnoseStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	envelope, alertName, severity, recKind, recName := buildScopedEnvelope(scope, kind, namespace, name)
+	// Cost-aware RCA: attach the workload's cost when OpenCost data is available
+	// (best-effort; omitted otherwise). OpenSRE can fold cost impact into the report.
+	if scope == "resource" {
+		if wc, ok := opencost.WorkloadCostFor(r.Context(), namespace, name); ok {
+			envelope["cost"] = map[string]any{
+				"hourlyUSD":           wc.HourlyCost,
+				"monthlyUSD":          wc.HourlyCost * 730,
+				"cpuCostHourlyUSD":    wc.CPUCost,
+				"memoryCostHourlyUSD": wc.MemoryCost,
+				"efficiencyPct":       wc.Efficiency,
+				"replicas":            wc.Replicas,
+			}
+		}
+	}
 	stream, err := s.opensreClient.InvestigateStream(r.Context(), opensre.InvestigateRequest{
 		RawAlert:     envelope,
 		AlertName:    alertName,

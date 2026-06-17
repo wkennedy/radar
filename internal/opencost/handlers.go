@@ -1,6 +1,7 @@
 package opencost
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -14,6 +15,32 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
+
+// WorkloadCostFor returns the cost breakdown for a single workload by name in a
+// namespace, or ok=false when cost data is unavailable (no Prometheus/OpenCost,
+// not connected, or no match). Best-effort — callers degrade gracefully.
+func WorkloadCostFor(ctx context.Context, namespace, name string) (pkgopencost.WorkloadCost, bool) {
+	if namespace == "" || name == "" {
+		return pkgopencost.WorkloadCost{}, false
+	}
+	client := prometheuspkg.GetClient()
+	if client == nil {
+		return pkgopencost.WorkloadCost{}, false
+	}
+	if _, _, err := client.EnsureConnected(ctx); err != nil {
+		return pkgopencost.WorkloadCost{}, false
+	}
+	resp := pkgopencost.ComputeWorkloadsFromProm(ctx, client.Prom(), namespace, buildPodOwnerLookup(namespace))
+	if resp == nil || !resp.Available {
+		return pkgopencost.WorkloadCost{}, false
+	}
+	for _, w := range resp.Workloads {
+		if w.Name == name {
+			return w, true
+		}
+	}
+	return pkgopencost.WorkloadCost{}, false
+}
 
 // RegisterRoutes registers OpenCost routes on the given router.
 func RegisterRoutes(r chi.Router) {
