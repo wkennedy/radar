@@ -95,6 +95,10 @@ export function useCanDiagnoseWithAI(): boolean {
   return useContext(CapabilitiesContext).openSREEnabled ?? false
 }
 
+export function useCanRemediate(): boolean {
+  return useContext(CapabilitiesContext).openSRERemediationEnabled ?? false
+}
+
 export function useCanViewSecrets(): boolean {
   return useContext(CapabilitiesContext).secrets
 }

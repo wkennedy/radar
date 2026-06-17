@@ -142,6 +142,7 @@ func (s *Server) handleDiagnoseStream(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				persist()
+				s.notify.notify(rec)
 				fmt.Fprint(w, "event: done\ndata: {}\n\n")
 				flusher.Flush()
 				return
@@ -302,6 +303,7 @@ func (s *Server) runHeadlessInvestigation(ctx context.Context, kind, namespace, 
 		rec.Status = "error"
 		rec.Error = err.Error()
 		s.diagnoses.put(rec)
+		s.notify.notify(rec)
 		return rec
 	}
 
@@ -315,6 +317,7 @@ func (s *Server) runHeadlessInvestigation(ctx context.Context, kind, namespace, 
 		}
 	}
 	s.diagnoses.put(rec)
+	s.notify.notify(rec)
 	return rec
 }
 
@@ -369,6 +372,44 @@ func (s *Server) handleDiagnoseChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeJSON(w, map[string]string{"reply": reply})
+}
+
+// handleDiagnoseRemediation proposes typed, safe fixes for a stored diagnosis.
+// POST /api/diagnose/remediation {id}. Gated on --opensre-remediation. Returns
+// the proposed actions; it does NOT execute anything — the browser applies them
+// via Radar's existing RBAC-enforced workload endpoints, with confirmation.
+func (s *Server) handleDiagnoseRemediation(w http.ResponseWriter, r *http.Request) {
+	if !s.remediationEnabled {
+		s.writeError(w, http.StatusNotFound, "remediation suggestions are disabled (set --opensre-remediation)")
+		return
+	}
+	if !s.opensreClient.IsConfigured() {
+		s.writeError(w, http.StatusNotFound, "OpenSRE is not configured")
+		return
+	}
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	rec, ok := s.diagnoses.get(body.ID)
+	if !ok {
+		s.writeError(w, http.StatusNotFound, "diagnosis not found")
+		return
+	}
+
+	actions, err := s.opensreClient.Remediate(r.Context(), opensre.RemediationRequest{
+		RootCause: rec.RootCause,
+		Report:    rec.Report,
+		Subject:   opensre.RemediationSubject{Kind: rec.Kind, Namespace: rec.Namespace, Name: rec.Name},
+	})
+	if err != nil {
+		s.writeError(w, http.StatusBadGateway, fmt.Sprintf("OpenSRE remediation failed: %v", err))
+		return
+	}
+	s.writeJSON(w, map[string]any{"actions": actions})
 }
 
 // buildAlertEnvelope assembles the small Radar alert envelope (the OpenSRE

@@ -1690,6 +1690,39 @@ export async function sendDiagnoseChat(
   return data.reply ?? ''
 }
 
+// A typed, safe remediation action proposed by OpenSRE (restart | scale).
+export interface RemediationAction {
+  type: 'restart' | 'scale' | string
+  kind: string
+  namespace: string
+  name: string
+  replicas?: number
+  description?: string
+  risk?: 'low' | 'medium' | 'high' | string
+}
+
+// fetchRemediation asks OpenSRE (via Radar) for proposed fixes for a stored
+// diagnosis. Gated server-side on --opensre-remediation.
+export async function fetchRemediation(id: string): Promise<RemediationAction[]> {
+  const res = await apiFetch(`${getApiBase()}/diagnose/remediation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  })
+  if (!res.ok) {
+    let detail = `remediation failed (${res.status})`
+    try {
+      const body = await res.json()
+      if (body?.error) detail = String(body.error)
+    } catch {
+      /* keep default */
+    }
+    throw new Error(detail)
+  }
+  const data = (await res.json()) as { actions?: RemediationAction[] }
+  return data.actions ?? []
+}
+
 // usePastDiagnoses lists stored diagnoses for a resource (newest first).
 export function usePastDiagnoses(kind: string, namespace: string, name: string, enabled = true) {
   return useQuery<DiagnosisRecord[]>({

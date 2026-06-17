@@ -52,24 +52,26 @@ import (
 
 // Server is the Explorer HTTP server
 type Server struct {
-	router          *chi.Mux
-	broadcaster     *SSEBroadcaster
-	port            int
-	devMode         bool
-	staticFS        fs.FS
-	startTime       time.Time
-	listener        net.Listener
-	updater         *updater.Updater
-	mcpHandler      http.Handler
-	diagConfig      *DiagConfig
-	effectiveConfig *config.Config // running config for GET /api/config
-	authConfig      auth.Config
-	permCache       *auth.PermissionCache
-	oidcHandler     *auth.OIDCHandler
-	saveFileFunc    func(defaultFilename string, data []byte) (string, error)
-	opensreClient   *opensre.Client // OpenSRE "Diagnose with AI" trigger; always non-nil, may be unconfigured
-	diagnoses       *diagnoseStore  // persisted "Diagnose with AI" results (in-memory, bounded)
-	autoDiag        *autoDiagnoser  // proactive auto-diagnosis poller; nil unless enabled + OpenSRE configured
+	router             *chi.Mux
+	broadcaster        *SSEBroadcaster
+	port               int
+	devMode            bool
+	staticFS           fs.FS
+	startTime          time.Time
+	listener           net.Listener
+	updater            *updater.Updater
+	mcpHandler         http.Handler
+	diagConfig         *DiagConfig
+	effectiveConfig    *config.Config // running config for GET /api/config
+	authConfig         auth.Config
+	permCache          *auth.PermissionCache
+	oidcHandler        *auth.OIDCHandler
+	saveFileFunc       func(defaultFilename string, data []byte) (string, error)
+	opensreClient      *opensre.Client // OpenSRE "Diagnose with AI" trigger; always non-nil, may be unconfigured
+	diagnoses          *diagnoseStore  // persisted "Diagnose with AI" results (in-memory, bounded)
+	notify             *notifier       // outbound webhook on completed diagnoses; always non-nil, no-op when unconfigured
+	remediationEnabled bool            // gate for OpenSRE "Apply fix" remediation suggestions
+	autoDiag           *autoDiagnoser  // proactive auto-diagnosis poller; nil unless enabled + OpenSRE configured
 
 	// nsPreferences holds each user's active-namespace pick from the in-app
 	// switcher. Key shape: "<username>\x00<contextName>" when auth is enabled,
@@ -97,17 +99,20 @@ type Server struct {
 
 // Config holds server configuration
 type Config struct {
-	Port            int
-	DevMode         bool               // Serve frontend from filesystem instead of embedded
-	StaticFS        embed.FS           // Embedded frontend files
-	StaticRoot      string             // Path within StaticFS
-	MCPHandler      http.Handler       // MCP server handler (nil = MCP disabled)
-	DiagConfig      *DiagConfig        // Sanitized config for diagnostics endpoint
-	EffectiveConfig *config.Config     // Running startup config for GET /api/config
-	AuthConfig      auth.Config        // Authentication configuration
-	OpenSREURL      string             // OpenSRE service URL for "Diagnose with AI" (empty = disabled)
-	OpenSREToken    string             // OpenSRE API key (sent as X-API-Key)
-	AutoDiagnose    AutoDiagnoseConfig // Proactive auto-diagnosis on critical issues (off by default)
+	Port               int
+	DevMode            bool               // Serve frontend from filesystem instead of embedded
+	StaticFS           embed.FS           // Embedded frontend files
+	StaticRoot         string             // Path within StaticFS
+	MCPHandler         http.Handler       // MCP server handler (nil = MCP disabled)
+	DiagConfig         *DiagConfig        // Sanitized config for diagnostics endpoint
+	EffectiveConfig    *config.Config     // Running startup config for GET /api/config
+	AuthConfig         auth.Config        // Authentication configuration
+	OpenSREURL         string             // OpenSRE service URL for "Diagnose with AI" (empty = disabled)
+	OpenSREToken       string             // OpenSRE API key (sent as X-API-Key)
+	AutoDiagnose       AutoDiagnoseConfig // Proactive auto-diagnosis on critical issues (off by default)
+	NotifyWebhook      string             // Outbound webhook for completed diagnoses (Slack-compatible; empty = off)
+	RadarBaseURL       string             // External base URL for deep links in notifications (empty = http://localhost:<port>)
+	OpenSRERemediation bool               // Enable "Apply fix" remediation suggestions (off by default)
 }
 
 // New creates a new server instance
@@ -115,19 +120,21 @@ func New(cfg Config) *Server {
 	cfg.AuthConfig.Defaults()
 
 	s := &Server{
-		router:          chi.NewRouter(),
-		broadcaster:     NewSSEBroadcaster(),
-		port:            cfg.Port,
-		devMode:         cfg.DevMode,
-		startTime:       time.Now(),
-		mcpHandler:      cfg.MCPHandler,
-		diagConfig:      cfg.DiagConfig,
-		effectiveConfig: cfg.EffectiveConfig,
-		authConfig:      cfg.AuthConfig,
-		topoMemo:        topology.NewMemoizer(5 * time.Second),
-		rbacMemo:        rbac.NewMemoizer(5 * time.Second),
-		opensreClient:   opensre.NewClient(cfg.OpenSREURL, cfg.OpenSREToken),
-		diagnoses:       newDiagnoseStore(500),
+		router:             chi.NewRouter(),
+		broadcaster:        NewSSEBroadcaster(),
+		port:               cfg.Port,
+		devMode:            cfg.DevMode,
+		startTime:          time.Now(),
+		mcpHandler:         cfg.MCPHandler,
+		diagConfig:         cfg.DiagConfig,
+		effectiveConfig:    cfg.EffectiveConfig,
+		authConfig:         cfg.AuthConfig,
+		topoMemo:           topology.NewMemoizer(5 * time.Second),
+		rbacMemo:           rbac.NewMemoizer(5 * time.Second),
+		opensreClient:      opensre.NewClient(cfg.OpenSREURL, cfg.OpenSREToken),
+		diagnoses:          newDiagnoseStore(500),
+		notify:             newNotifier(cfg.NotifyWebhook, cfg.RadarBaseURL, cfg.Port),
+		remediationEnabled: cfg.OpenSRERemediation,
 	}
 
 	// Register a single context-switch callback so every PerformContextSwitch
@@ -270,7 +277,8 @@ func (s *Server) setupRoutes() {
 		r.Get("/pods/{namespace}/{name}/files/download", s.handlePodFileDownload)
 		r.Get("/workloads/{kind}/{namespace}/{name}/logs/stream", s.handleWorkloadLogsStream)
 		r.Get("/diagnose/stream", s.handleDiagnoseStream)
-		r.Post("/diagnose/chat", s.handleDiagnoseChat) // follow-up Q&A; LLM reply may exceed the 60s API timeout
+		r.Post("/diagnose/chat", s.handleDiagnoseChat)               // follow-up Q&A; LLM reply may exceed the 60s API timeout
+		r.Post("/diagnose/remediation", s.handleDiagnoseRemediation) // propose typed fixes; LLM call may exceed 60s
 
 		// Node drain — outside 60s timeout group (drain may need minutes for PDB backoff)
 		r.Post("/nodes/{name}/drain", s.handleDrainNode)
@@ -752,6 +760,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 
 	caps.MCPEnabled = s.mcpHandler != nil
 	caps.OpenSREEnabled = s.opensreClient.IsConfigured()
+	caps.OpenSRERemediationEnabled = s.remediationEnabled && s.opensreClient.IsConfigured()
 	caps.Deployment = k8s.DeploymentInfo{Mode: deploymentMode()}
 	caps.AuthEnabled = s.authConfig.Enabled()
 	if user := auth.UserFromContext(r.Context()); user != nil {

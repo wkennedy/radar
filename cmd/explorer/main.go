@@ -128,6 +128,13 @@ func main() {
 	autoDiagnoseInterval := flag.Duration("opensre-autodiagnose-interval", 60*time.Second, "Auto-diagnosis poll cadence")
 	autoDiagnoseCooldown := flag.Duration("opensre-autodiagnose-cooldown", 30*time.Minute, "Suppress re-diagnosing the same issue/resource within this window")
 	autoDiagnoseMaxPerHour := flag.Int("opensre-autodiagnose-max-per-hour", 10, "Hard cap on auto-investigations launched per rolling hour")
+	// Outbound notification for completed diagnoses (Slack-compatible webhook).
+	notifyWebhook := flag.String("notify-webhook", os.Getenv("RADAR_NOTIFY_WEBHOOK"), "Webhook URL to POST a summary when a diagnosis completes (Slack incoming webhook compatible; empty = off). Env: RADAR_NOTIFY_WEBHOOK")
+	radarBaseURL := flag.String("radar-base-url", os.Getenv("RADAR_BASE_URL"), "External base URL for deep links in notifications, e.g. https://radar.example.com (default: http://localhost:<port>). Env: RADAR_BASE_URL")
+	// "Apply fix": offer OpenSRE-proposed safe remediation (restart/scale) on a
+	// diagnosis, executed via Radar's RBAC-enforced endpoints with confirmation.
+	// Off by default; requires --opensre-url. Env: RADAR_OPENSRE_REMEDIATION=true
+	opensreRemediation := flag.Bool("opensre-remediation", os.Getenv("RADAR_OPENSRE_REMEDIATION") == "true", "Offer OpenSRE remediation suggestions (restart/scale) on diagnoses, applied with confirmation via Radar's RBAC-checked workload endpoints (off by default; requires --opensre-url). Env: RADAR_OPENSRE_REMEDIATION=true")
 	flag.Parse()
 
 	// Cloud-mode: Radar runs inside a customer cluster and fronts Radar
@@ -239,6 +246,9 @@ func main() {
 		AutoDiagnoseInterval:     *autoDiagnoseInterval,
 		AutoDiagnoseCooldown:     *autoDiagnoseCooldown,
 		AutoDiagnoseMaxPerHour:   *autoDiagnoseMaxPerHour,
+		NotifyWebhook:            *notifyWebhook,
+		RadarBaseURL:             *radarBaseURL,
+		OpenSRERemediation:       *opensreRemediation,
 		AuthConfig: auth.Config{
 			Mode:                      *authMode,
 			Secret:                    *authSecret,

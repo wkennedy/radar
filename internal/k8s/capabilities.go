@@ -73,22 +73,23 @@ type PermissionCheckResult struct {
 
 // Capabilities represents the features available based on RBAC permissions
 type Capabilities struct {
-	Exec           bool                     `json:"exec"`                  // Can create pods/exec (terminal feature)
-	LocalTerminal  bool                     `json:"localTerminal"`         // Local terminal available (not in-cluster, not disabled)
-	Logs           bool                     `json:"logs"`                  // Can get pods/log (log viewer)
-	PortForward    bool                     `json:"portForward"`           // Can create pods/portforward
-	Secrets        bool                     `json:"secrets"`               // Can list secrets
-	SecretsUpdate  bool                     `json:"secretsUpdate"`         // Can update secrets (inline editing)
-	HelmWrite      bool                     `json:"helmWrite"`             // Helm write ops (detected via secrets/create as sentinel RBAC check)
-	NodeWrite      bool                     `json:"nodeWrite"`             // Can patch nodes (cordon/uncordon/drain)
-	WorkloadWrites WorkloadWritePermissions `json:"workloadWrites"`        // Can patch workload kinds (restart/scale controls)
-	MCPEnabled     bool                     `json:"mcpEnabled"`            // MCP server is running
-	OpenSREEnabled bool                     `json:"openSREEnabled"`        // OpenSRE "Diagnose with AI" trigger is configured
-	Deployment     DeploymentInfo           `json:"deployment"`            // How / where this Radar binary is running. Tells the UI which chrome to render or suppress (e.g. embedded mode hides the cluster headline + local-MCP card because the hub already renders both).
-	AuthEnabled    bool                     `json:"authEnabled,omitempty"` // Auth is enabled on the server
-	Username       string                   `json:"username,omitempty"`    // Authenticated username (when auth enabled)
-	Resources      *ResourcePermissions     `json:"resources,omitempty"`   // Per-resource-type permissions
-	Visibility     *VisibilitySummary       `json:"visibility,omitempty"`  // Present when resource visibility is limited enough to make diagnostics incomplete
+	Exec                      bool                     `json:"exec"`                      // Can create pods/exec (terminal feature)
+	LocalTerminal             bool                     `json:"localTerminal"`             // Local terminal available (not in-cluster, not disabled)
+	Logs                      bool                     `json:"logs"`                      // Can get pods/log (log viewer)
+	PortForward               bool                     `json:"portForward"`               // Can create pods/portforward
+	Secrets                   bool                     `json:"secrets"`                   // Can list secrets
+	SecretsUpdate             bool                     `json:"secretsUpdate"`             // Can update secrets (inline editing)
+	HelmWrite                 bool                     `json:"helmWrite"`                 // Helm write ops (detected via secrets/create as sentinel RBAC check)
+	NodeWrite                 bool                     `json:"nodeWrite"`                 // Can patch nodes (cordon/uncordon/drain)
+	WorkloadWrites            WorkloadWritePermissions `json:"workloadWrites"`            // Can patch workload kinds (restart/scale controls)
+	MCPEnabled                bool                     `json:"mcpEnabled"`                // MCP server is running
+	OpenSREEnabled            bool                     `json:"openSREEnabled"`            // OpenSRE "Diagnose with AI" trigger is configured
+	OpenSRERemediationEnabled bool                     `json:"openSRERemediationEnabled"` // "Apply fix" remediation suggestions enabled
+	Deployment                DeploymentInfo           `json:"deployment"`                // How / where this Radar binary is running. Tells the UI which chrome to render or suppress (e.g. embedded mode hides the cluster headline + local-MCP card because the hub already renders both).
+	AuthEnabled               bool                     `json:"authEnabled,omitempty"`     // Auth is enabled on the server
+	Username                  string                   `json:"username,omitempty"`        // Authenticated username (when auth enabled)
+	Resources                 *ResourcePermissions     `json:"resources,omitempty"`       // Per-resource-type permissions
+	Visibility                *VisibilitySummary       `json:"visibility,omitempty"`      // Present when resource visibility is limited enough to make diagnostics incomplete
 }
 
 // WorkloadWritePermissions indicates which workload resources the user can patch.

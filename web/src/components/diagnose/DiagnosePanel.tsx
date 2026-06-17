@@ -7,15 +7,19 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { Sparkles, X, Loader2, AlertTriangle, CheckCircle2, ChevronRight, ChevronDown, MessageSquare } from 'lucide-react'
+import { Sparkles, X, Loader2, AlertTriangle, CheckCircle2, ChevronRight, ChevronDown, MessageSquare, Wrench, Check } from 'lucide-react'
 import {
   createDiagnoseStream,
   sendDiagnoseChat,
+  fetchRemediation,
+  useRestartWorkload,
+  useScaleWorkload,
   type DiagnosisRecord,
   type DiagnosisEvidence,
   type DiagnoseChatTurn,
+  type RemediationAction,
 } from '../../api/client'
-import { useCanDiagnoseWithAI } from '../../contexts/CapabilitiesContext'
+import { useCanDiagnoseWithAI, useCanRemediate, useCapabilitiesContext } from '../../contexts/CapabilitiesContext'
 import { Markdown } from '../ui/Markdown'
 
 export interface DiagnoseTarget {
@@ -335,6 +339,151 @@ function DiagnoseChat({ id }: { id: string }) {
   )
 }
 
+function riskBadge(risk?: string) {
+  const tone = risk === 'high' ? 'text-red-400' : risk === 'low' ? 'text-green-400' : 'text-amber-400'
+  return <span className={`text-[10px] uppercase tracking-wide ${tone}`}>{risk || 'medium'} risk</span>
+}
+
+// RemediationSection fetches OpenSRE-proposed safe fixes (restart/scale) for a
+// stored diagnosis and applies them — confirm-gated, capability-gated — through
+// Radar's existing RBAC-enforced workload mutations. Self-gates on the
+// remediation capability (off by default).
+function RemediationSection({ record }: { record: DiagnosisRecord }) {
+  const canRemediate = useCanRemediate()
+  const caps = useCapabilitiesContext()
+  const restart = useRestartWorkload()
+  const scale = useScaleWorkload()
+  const [actions, setActions] = useState<RemediationAction[] | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [confirmIdx, setConfirmIdx] = useState<number | null>(null)
+  const [status, setStatus] = useState<Record<number, { state: 'applying' | 'done' | 'error'; msg?: string }>>({})
+
+  const suggest = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setActions(await fetchRemediation(record.id))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to get suggestions.')
+    } finally {
+      setLoading(false)
+    }
+  }, [record.id])
+
+  const writeAllowed = (kind: string): boolean => {
+    const w = caps.workloadWrites
+    if (!w) return false
+    const k = kind.toLowerCase()
+    if (k.includes('deployment')) return w.deployments
+    if (k.includes('statefulset')) return w.statefulSets
+    if (k.includes('daemonset')) return w.daemonSets
+    if (k.includes('rollout')) return w.rollouts
+    return false
+  }
+
+  const apply = useCallback(
+    async (idx: number, a: RemediationAction) => {
+      setConfirmIdx(null)
+      setStatus((s) => ({ ...s, [idx]: { state: 'applying' } }))
+      try {
+        if (a.type === 'restart') {
+          await restart.mutateAsync({ kind: a.kind, namespace: a.namespace, name: a.name })
+        } else if (a.type === 'scale' && typeof a.replicas === 'number') {
+          await scale.mutateAsync({ kind: a.kind, namespace: a.namespace, name: a.name, replicas: a.replicas })
+        } else {
+          throw new Error('unsupported action')
+        }
+        setStatus((s) => ({ ...s, [idx]: { state: 'done' } }))
+      } catch (e) {
+        setStatus((s) => ({ ...s, [idx]: { state: 'error', msg: e instanceof Error ? e.message : 'failed' } }))
+      }
+    },
+    [restart, scale],
+  )
+
+  if (!canRemediate) return null
+
+  return (
+    <div className="rounded-md border border-theme-border">
+      <div className="flex items-center justify-between border-b border-theme-border p-2">
+        <div className="flex items-center gap-1.5 text-xs font-medium text-theme-text-secondary">
+          <Wrench className="w-3.5 h-3.5" /> Suggested fixes
+        </div>
+        {actions === null && (
+          <button
+            onClick={() => void suggest()}
+            disabled={loading}
+            className="rounded-md border border-theme-border px-2 py-1 text-xs font-medium text-theme-text-primary hover:bg-theme-hover disabled:opacity-40"
+          >
+            {loading ? 'Thinking…' : 'Suggest fixes'}
+          </button>
+        )}
+      </div>
+      <div className="space-y-2 p-2">
+        {error && <div className="text-xs text-red-400">{error}</div>}
+        {actions !== null && actions.length === 0 && (
+          <div className="text-xs text-theme-text-tertiary">No safe automated fix suggested for this diagnosis.</div>
+        )}
+        {actions?.map((a, i) => {
+          const label =
+            a.type === 'scale'
+              ? `Scale ${a.kind} ${a.namespace}/${a.name} → ${a.replicas} replicas`
+              : `Restart ${a.kind} ${a.namespace}/${a.name}`
+          const can = writeAllowed(a.kind)
+          const st = status[i]
+          return (
+            <div key={i} className="rounded border border-theme-border p-2 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-theme-text-primary">{label}</span>
+                {riskBadge(a.risk)}
+              </div>
+              {a.description && <div className="mt-0.5 text-xs text-theme-text-tertiary">{a.description}</div>}
+              <div className="mt-2 flex items-center gap-2">
+                {st?.state === 'done' ? (
+                  <span className="flex items-center gap-1 text-xs text-green-400">
+                    <Check className="w-3.5 h-3.5" /> Applied
+                  </span>
+                ) : st?.state === 'applying' ? (
+                  <span className="flex items-center gap-1 text-xs text-theme-text-tertiary">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Applying…
+                  </span>
+                ) : confirmIdx === i ? (
+                  <>
+                    <span className="text-xs text-theme-text-secondary">Apply this change to the cluster?</span>
+                    <button
+                      onClick={() => void apply(i, a)}
+                      className="rounded bg-red-500/15 px-2 py-1 text-xs font-medium text-red-300 hover:bg-red-500/25"
+                    >
+                      Confirm
+                    </button>
+                    <button
+                      onClick={() => setConfirmIdx(null)}
+                      className="rounded border border-theme-border px-2 py-1 text-xs"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => setConfirmIdx(i)}
+                    disabled={!can}
+                    title={can ? '' : `You lack write permission for ${a.kind}`}
+                    className="rounded-md border border-theme-border px-2 py-1 text-xs font-medium text-theme-text-primary hover:bg-theme-hover disabled:opacity-40"
+                  >
+                    Apply
+                  </button>
+                )}
+                {st?.state === 'error' && <span className="text-xs text-red-400">{st.msg}</span>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function DiagnosePanel({
   target,
   record,
@@ -423,6 +572,8 @@ function DiagnosePanel({
           )}
 
           {vm.evidence.length > 0 && <EvidenceTrail evidence={vm.evidence} />}
+
+          {record && record.status !== 'error' && record.report && <RemediationSection record={record} />}
 
           {record && record.status !== 'error' && record.report && <DiagnoseChat id={record.id} />}
         </div>

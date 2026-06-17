@@ -58,6 +58,9 @@ type AppConfig struct {
 	AutoDiagnoseInterval     time.Duration
 	AutoDiagnoseCooldown     time.Duration
 	AutoDiagnoseMaxPerHour   int
+	NotifyWebhook            string
+	RadarBaseURL             string
+	OpenSRERemediation       bool
 }
 
 // SetGlobals applies debug/test flags to global state.
@@ -212,6 +215,9 @@ func CreateServer(cfg AppConfig) *server.Server {
 			Cooldown:   cfg.AutoDiagnoseCooldown,
 			MaxPerHour: cfg.AutoDiagnoseMaxPerHour,
 		},
+		NotifyWebhook:      cfg.NotifyWebhook,
+		RadarBaseURL:       cfg.RadarBaseURL,
+		OpenSRERemediation: cfg.OpenSRERemediation,
 	}
 
 	if cfg.MCPEnabled {

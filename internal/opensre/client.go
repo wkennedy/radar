@@ -124,6 +124,67 @@ func (c *Client) Chat(ctx context.Context, reqBody ChatRequest) (string, error) 
 	return out.Reply, nil
 }
 
+// RemediationAction is one typed, safe, reversible fix OpenSRE proposes. Only
+// restart/scale are supported in v1 (the allowlist is enforced OpenSRE-side).
+type RemediationAction struct {
+	Type        string `json:"type"` // restart | scale
+	Kind        string `json:"kind"`
+	Namespace   string `json:"namespace"`
+	Name        string `json:"name"`
+	Replicas    *int   `json:"replicas,omitempty"`
+	Description string `json:"description"`
+	Risk        string `json:"risk"`
+}
+
+// RemediationSubject is the workload a remediation plan targets.
+type RemediationSubject struct {
+	Kind      string `json:"kind"`
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+}
+
+// RemediationRequest is the OpenSRE /remediation request body.
+type RemediationRequest struct {
+	RootCause string             `json:"root_cause"`
+	Report    string             `json:"report"`
+	Subject   RemediationSubject `json:"subject"`
+}
+
+// Remediate asks OpenSRE for typed remediation actions grounded in a completed
+// investigation. Returns the proposed actions (possibly empty).
+func (c *Client) Remediate(ctx context.Context, reqBody RemediationRequest) ([]RemediationAction, error) {
+	if !c.IsConfigured() {
+		return nil, fmt.Errorf("OpenSRE is not configured")
+	}
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("marshal remediation request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/remediation", bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("build remediation request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("call OpenSRE: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("OpenSRE returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	var out struct {
+		Actions []RemediationAction `json:"actions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode remediation response: %w", err)
+	}
+	return out.Actions, nil
+}
+
 // InvestigateStream POSTs the request to OpenSRE /investigate/stream and returns
 // a channel of parsed SSE frames. The channel closes when the stream ends, the
 // context is cancelled, or an error occurs (errors are surfaced via the return

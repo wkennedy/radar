@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -220,6 +221,40 @@ func TestHandleDiagnoseStream_PersistsAndServesHistory(t *testing.T) {
 	}
 }
 
+func TestHandleDiagnoseStream_FiresNotification(t *testing.T) {
+	mock := mockOpenSREWithResult(t)
+	defer mock.Close()
+
+	got := make(chan map[string]any, 1)
+	sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		select {
+		case got <- body:
+		default:
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer sink.Close()
+
+	srv := New(Config{
+		DevMode: true, OpenSREURL: mock.URL, OpenSREToken: "k",
+		NotifyWebhook: sink.URL, RadarBaseURL: "http://localhost:9280",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/diagnose/stream?kind=Deployment&namespace=broken&name=stuck-app", nil)
+	srv.handleDiagnoseStream(httptest.NewRecorder(), req)
+
+	select {
+	case body := <-got:
+		text, _ := body["text"].(string)
+		if !strings.Contains(text, "stuck-app") || !strings.Contains(text, "/workload/Deployment/broken/stuck-app") {
+			t.Errorf("notification missing resource/deep link: %q", text)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("expected a notification webhook call after diagnosis completion")
+	}
+}
+
 func TestHandleDiagnoseChat(t *testing.T) {
 	var gotBody opensre.ChatRequest
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -275,5 +310,49 @@ func TestHandleDiagnoseChat_Errors(t *testing.T) {
 	srv.handleDiagnoseChat(rec, httptest.NewRequest(http.MethodPost, "/api/diagnose/chat", strings.NewReader(`{"id":"nope","message":"hi"}`)))
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("unknown id status = %d, want 404", rec.Code)
+	}
+}
+
+func TestHandleDiagnoseRemediation(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/remediation" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"actions":[{"type":"restart","kind":"Deployment","namespace":"ns","name":"web","risk":"low"},{"type":"scale","kind":"Deployment","namespace":"ns","name":"web","replicas":3}]}`)
+	}))
+	defer mock.Close()
+
+	srv := New(Config{DevMode: true, OpenSREURL: mock.URL, OpenSREToken: "k", OpenSRERemediation: true})
+	srv.diagnoses.put(&DiagnosisRecord{ID: "d1", Kind: "Deployment", Namespace: "ns", Name: "web", RootCause: "wedged", Report: "## RCA", Status: "done"})
+
+	rec := httptest.NewRecorder()
+	srv.handleDiagnoseRemediation(rec, httptest.NewRequest(http.MethodPost, "/api/diagnose/remediation", strings.NewReader(`{"id":"d1"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp struct {
+		Actions []opensre.RemediationAction `json:"actions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("bad response: %v", err)
+	}
+	if len(resp.Actions) != 2 || resp.Actions[0].Type != "restart" || resp.Actions[1].Type != "scale" {
+		t.Fatalf("actions = %+v", resp.Actions)
+	}
+	if resp.Actions[1].Replicas == nil || *resp.Actions[1].Replicas != 3 {
+		t.Errorf("scale replicas not parsed: %+v", resp.Actions[1])
+	}
+}
+
+func TestHandleDiagnoseRemediation_DisabledByDefault(t *testing.T) {
+	srv := New(Config{DevMode: true, OpenSREURL: "http://x", OpenSREToken: "k"}) // OpenSRERemediation false
+	srv.diagnoses.put(&DiagnosisRecord{ID: "d1", Kind: "Deployment", Namespace: "ns", Name: "web", Status: "done"})
+
+	rec := httptest.NewRecorder()
+	srv.handleDiagnoseRemediation(rec, httptest.NewRequest(http.MethodPost, "/api/diagnose/remediation", strings.NewReader(`{"id":"d1"}`)))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("disabled remediation status = %d, want 404", rec.Code)
 	}
 }

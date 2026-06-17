@@ -72,6 +72,8 @@ export interface Capabilities {
   // newer frontend doesn't crash against an older backend lacking the field —
   // consumers default to false (feature hidden).
   openSREEnabled?: boolean
+  // OpenSRE "Apply fix" remediation suggestions enabled (restart/scale).
+  openSRERemediationEnabled?: boolean
   // How / where this Radar binary is running. Optional on the wire so a
   // newer frontend (e.g. radar-hub-web bundling a fresher @skyhook-io/radar-app)
   // doesn't crash against an older backend that hasn't shipped the field yet —
