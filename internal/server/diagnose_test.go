@@ -421,3 +421,32 @@ func TestHandleDiagnoseRemediation_DisabledByDefault(t *testing.T) {
 		t.Errorf("disabled remediation status = %d, want 404", rec.Code)
 	}
 }
+
+func TestHandleDiagnoseFeedback(t *testing.T) {
+	srv := New(Config{DevMode: true}) // OpenSRE unconfigured → no async forward
+	srv.diagnoses.put(&DiagnosisRecord{ID: "d1", Kind: "Deployment", Namespace: "ns", Name: "web", Status: "done"})
+
+	rec := httptest.NewRecorder()
+	srv.handleDiagnoseFeedback(rec, httptest.NewRequest(http.MethodPost, "/api/diagnose/feedback", strings.NewReader(`{"id":"d1","verdict":"down","note":"missed it"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	got, _ := srv.diagnoses.get("d1")
+	if got.Feedback == nil || got.Feedback.Verdict != "down" || got.Feedback.Note != "missed it" {
+		t.Errorf("feedback not stored on record: %+v", got.Feedback)
+	}
+
+	// Invalid verdict → 400.
+	rec = httptest.NewRecorder()
+	srv.handleDiagnoseFeedback(rec, httptest.NewRequest(http.MethodPost, "/api/diagnose/feedback", strings.NewReader(`{"id":"d1","verdict":"meh"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid verdict status = %d, want 400", rec.Code)
+	}
+
+	// Unknown id → 404.
+	rec = httptest.NewRecorder()
+	srv.handleDiagnoseFeedback(rec, httptest.NewRequest(http.MethodPost, "/api/diagnose/feedback", strings.NewReader(`{"id":"nope","verdict":"up"}`)))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown id status = %d, want 404", rec.Code)
+	}
+}

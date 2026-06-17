@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -428,6 +429,53 @@ func (s *Server) handleDiagnoseRemediation(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.writeJSON(w, map[string]any{"actions": actions})
+}
+
+// handleDiagnoseFeedback records a thumbs rating on a stored diagnosis and
+// forwards it to OpenSRE's eval dataset (best-effort, async).
+// POST /api/diagnose/feedback {id, verdict, note}.
+func (s *Server) handleDiagnoseFeedback(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID      string `json:"id"`
+		Verdict string `json:"verdict"`
+		Note    string `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		s.writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.Verdict != "up" && body.Verdict != "down" {
+		s.writeError(w, http.StatusBadRequest, "verdict must be 'up' or 'down'")
+		return
+	}
+	rec, ok := s.diagnoses.get(body.ID)
+	if !ok {
+		s.writeError(w, http.StatusNotFound, "diagnosis not found")
+		return
+	}
+
+	rec.Feedback = &DiagnosisFeedback{Verdict: body.Verdict, Note: body.Note, At: time.Now()}
+	s.diagnoses.put(rec)
+
+	// Forward to OpenSRE's eval dataset out of band — never block or fail the UI.
+	if s.opensreClient.IsConfigured() {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if err := s.opensreClient.Feedback(ctx, opensre.FeedbackRequest{
+				InvestigationID: rec.ID,
+				Verdict:         body.Verdict,
+				Note:            body.Note,
+				RootCause:       rec.RootCause,
+				Kind:            rec.Kind,
+				Namespace:       rec.Namespace,
+				Name:            rec.Name,
+			}); err != nil {
+				log.Printf("[feedback] forward to OpenSRE failed: %v", err)
+			}
+		}()
+	}
+	s.writeJSON(w, map[string]bool{"ok": true})
 }
 
 // buildAlertEnvelope assembles the small Radar alert envelope (the OpenSRE

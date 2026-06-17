@@ -185,6 +185,46 @@ func (c *Client) Remediate(ctx context.Context, reqBody RemediationRequest) ([]R
 	return out.Actions, nil
 }
 
+// FeedbackRequest is the OpenSRE /feedback request body (quality loop).
+type FeedbackRequest struct {
+	InvestigationID string `json:"investigation_id"`
+	Verdict         string `json:"verdict"` // up | down
+	Note            string `json:"note,omitempty"`
+	RootCause       string `json:"root_cause,omitempty"`
+	Kind            string `json:"kind,omitempty"`
+	Namespace       string `json:"namespace,omitempty"`
+	Name            string `json:"name,omitempty"`
+}
+
+// Feedback forwards a thumbs rating to OpenSRE's eval dataset. Best-effort: the
+// caller should invoke it asynchronously and tolerate errors.
+func (c *Client) Feedback(ctx context.Context, reqBody FeedbackRequest) error {
+	if !c.IsConfigured() {
+		return fmt.Errorf("OpenSRE is not configured")
+	}
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("marshal feedback request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/feedback", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("build feedback request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-API-Key", c.token)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("call OpenSRE: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("OpenSRE returned %d: %s", resp.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+	return nil
+}
+
 // InvestigateStream POSTs the request to OpenSRE /investigate/stream and returns
 // a channel of parsed SSE frames. The channel closes when the stream ends, the
 // context is cancelled, or an error occurs (errors are surfaced via the return

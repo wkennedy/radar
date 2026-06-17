@@ -279,6 +279,7 @@ func (s *Server) setupRoutes() {
 		r.Get("/diagnose/stream", s.handleDiagnoseStream)
 		r.Post("/diagnose/chat", s.handleDiagnoseChat)               // follow-up Q&A; LLM reply may exceed the 60s API timeout
 		r.Post("/diagnose/remediation", s.handleDiagnoseRemediation) // propose typed fixes; LLM call may exceed 60s
+		r.Post("/diagnose/feedback", s.handleDiagnoseFeedback)       // thumbs rating; OpenSRE forward is async
 
 		// Node drain — outside 60s timeout group (drain may need minutes for PDB backoff)
 		r.Post("/nodes/{name}/drain", s.handleDrainNode)

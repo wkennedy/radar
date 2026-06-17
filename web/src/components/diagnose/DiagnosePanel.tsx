@@ -7,11 +7,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { Sparkles, X, Loader2, AlertTriangle, CheckCircle2, ChevronRight, ChevronDown, MessageSquare, Wrench, Check } from 'lucide-react'
+import { Sparkles, X, Loader2, AlertTriangle, CheckCircle2, ChevronRight, ChevronDown, MessageSquare, Wrench, Check, ThumbsUp, ThumbsDown } from 'lucide-react'
 import {
   createDiagnoseStream,
   sendDiagnoseChat,
   fetchRemediation,
+  sendDiagnosisFeedback,
   useRestartWorkload,
   useScaleWorkload,
   type DiagnosisRecord,
@@ -499,6 +500,51 @@ function RemediationSection({ record }: { record: DiagnosisRecord }) {
   )
 }
 
+// FeedbackButtons records a 👍/👎 on a stored diagnosis (quality loop).
+function FeedbackButtons({ record }: { record: DiagnosisRecord }) {
+  const [verdict, setVerdict] = useState<string | undefined>(record.feedback?.verdict)
+  const [busy, setBusy] = useState(false)
+
+  const rate = useCallback(
+    async (v: 'up' | 'down') => {
+      if (busy) return
+      setBusy(true)
+      const prev = verdict
+      setVerdict(v) // optimistic
+      try {
+        await sendDiagnosisFeedback(record.id, v)
+      } catch {
+        setVerdict(prev)
+      } finally {
+        setBusy(false)
+      }
+    },
+    [busy, verdict, record.id],
+  )
+
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-xs text-theme-text-tertiary">Helpful?</span>
+      <button
+        onClick={() => void rate('up')}
+        disabled={busy}
+        title="Helpful"
+        className={`rounded p-1 hover:bg-theme-hover ${verdict === 'up' ? 'text-green-400' : 'text-theme-text-tertiary'}`}
+      >
+        <ThumbsUp className="w-3.5 h-3.5" />
+      </button>
+      <button
+        onClick={() => void rate('down')}
+        disabled={busy}
+        title="Not helpful"
+        className={`rounded p-1 hover:bg-theme-hover ${verdict === 'down' ? 'text-red-400' : 'text-theme-text-tertiary'}`}
+      >
+        <ThumbsDown className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  )
+}
+
 function DiagnosePanel({
   target,
   record,
@@ -595,20 +641,23 @@ function DiagnosePanel({
         </div>
 
         <div className="flex items-center justify-between gap-2 p-4 border-t border-theme-border shrink-0">
-          <div className="text-xs text-theme-text-tertiary">
-            {streaming ? (
-              <span className="flex items-center gap-1.5">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Streaming…
-              </span>
-            ) : vm.status === 'error' ? (
-              <span className="flex items-center gap-1.5 text-red-400">
-                <AlertTriangle className="w-3.5 h-3.5" /> Failed
-              </span>
-            ) : (
-              <span className="flex items-center gap-1.5 text-theme-text-secondary">
-                <CheckCircle2 className="w-3.5 h-3.5" /> {record ? 'Saved diagnosis' : 'Investigation complete'}
-              </span>
-            )}
+          <div className="flex items-center gap-3">
+            <div className="text-xs text-theme-text-tertiary">
+              {streaming ? (
+                <span className="flex items-center gap-1.5">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Streaming…
+                </span>
+              ) : vm.status === 'error' ? (
+                <span className="flex items-center gap-1.5 text-red-400">
+                  <AlertTriangle className="w-3.5 h-3.5" /> Failed
+                </span>
+              ) : (
+                <span className="flex items-center gap-1.5 text-theme-text-secondary">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> {record ? 'Saved diagnosis' : 'Investigation complete'}
+                </span>
+              )}
+            </div>
+            {record && record.status !== 'error' && record.report && <FeedbackButtons record={record} />}
           </div>
           <button
             onClick={onClose}

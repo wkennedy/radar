@@ -1667,6 +1667,26 @@ export interface DiagnosisRecord {
   remediation?: string[]
   evidence?: DiagnosisEvidence[]
   error?: string
+  feedback?: { verdict: 'up' | 'down' | string; note?: string; at?: string }
+}
+
+// sendDiagnosisFeedback records a thumbs rating on a stored diagnosis.
+export async function sendDiagnosisFeedback(id: string, verdict: 'up' | 'down', note?: string): Promise<void> {
+  const res = await apiFetch(`${getApiBase()}/diagnose/feedback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id, verdict, note }),
+  })
+  if (!res.ok) {
+    let detail = `feedback failed (${res.status})`
+    try {
+      const body = await res.json()
+      if (body?.error) detail = String(body.error)
+    } catch {
+      /* keep default */
+    }
+    throw new Error(detail)
+  }
 }
 
 // A follow-up conversation turn for diagnosis chat.

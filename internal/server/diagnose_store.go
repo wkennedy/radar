@@ -15,6 +15,13 @@ type DiagnosisEvidence struct {
 	Summary string `json:"summary,omitempty"`
 }
 
+// DiagnosisFeedback is a user's thumbs rating of a diagnosis (quality loop).
+type DiagnosisFeedback struct {
+	Verdict string    `json:"verdict"` // up | down
+	Note    string    `json:"note,omitempty"`
+	At      time.Time `json:"at"`
+}
+
 // DiagnosisRecord is a persisted OpenSRE investigation result for one resource.
 type DiagnosisRecord struct {
 	ID            string              `json:"id"`
@@ -32,6 +39,7 @@ type DiagnosisRecord struct {
 	Remediation   []string            `json:"remediation,omitempty"`
 	Evidence      []DiagnosisEvidence `json:"evidence,omitempty"`
 	Error         string              `json:"error,omitempty"`
+	Feedback      *DiagnosisFeedback  `json:"feedback,omitempty"`
 }
 
 // diagnoseStore is an in-memory, bounded store of diagnosis records — the v1
