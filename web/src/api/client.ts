@@ -1625,9 +1625,20 @@ export function createLogStream(
 // for one resource and streams its progress/result frames. The backend relays
 // OpenSRE's SSE (event: events | done | error). Only meaningful when
 // capabilities.openSREEnabled is true.
-export function createDiagnoseStream(kind: string, namespace: string, name: string): EventSource {
-  const params = new URLSearchParams({ kind, name })
-  if (namespace) params.set('namespace', namespace)
+export interface DiagnoseStreamTarget {
+  scope?: 'resource' | 'namespace' | 'cluster'
+  kind?: string
+  namespace?: string
+  name?: string
+}
+
+export function createDiagnoseStream(t: DiagnoseStreamTarget): EventSource {
+  const params = new URLSearchParams()
+  const scope = t.scope || 'resource'
+  if (scope !== 'resource') params.set('scope', scope)
+  if (t.kind) params.set('kind', t.kind)
+  if (t.namespace) params.set('namespace', t.namespace)
+  if (t.name) params.set('name', t.name)
   return new EventSource(`${getApiBase()}/diagnose/stream?${params.toString()}`, {
     withCredentials: getCredentialsMode() === 'include',
   })

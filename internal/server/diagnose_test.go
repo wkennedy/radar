@@ -143,6 +143,71 @@ func TestBuildAlertEnvelope(t *testing.T) {
 	}
 }
 
+func TestBuildScopedEnvelope(t *testing.T) {
+	env, alert, _, recKind, recName := buildScopedEnvelope("cluster", "", "", "")
+	if env["scope"] != "cluster" {
+		t.Errorf("scope = %v, want cluster", env["scope"])
+	}
+	if _, ok := env["issues"]; !ok {
+		t.Error("cluster envelope should carry an issues list")
+	}
+	_ = recName // = kube context name; empty in the test harness, set in production
+	if recKind != "Cluster" {
+		t.Errorf("cluster rec kind = %q, want Cluster", recKind)
+	}
+	if !strings.Contains(alert, "Cluster health") {
+		t.Errorf("alert = %q", alert)
+	}
+
+	envN, alertN, _, rk, rn := buildScopedEnvelope("namespace", "", "broken", "")
+	if envN["scope"] != "namespace" || envN["namespace"] != "broken" {
+		t.Errorf("namespace envelope = %v", envN)
+	}
+	if rk != "Namespace" || rn != "broken" {
+		t.Errorf("namespace rec kind/name = %q/%q", rk, rn)
+	}
+	if !strings.Contains(alertN, "Namespace broken") {
+		t.Errorf("alertN = %q", alertN)
+	}
+}
+
+func TestHandleDiagnoseStream_ClusterScope(t *testing.T) {
+	mock := mockOpenSREWithResult(t)
+	defer mock.Close()
+	srv := New(Config{DevMode: true, OpenSREURL: mock.URL, OpenSREToken: "k"})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/diagnose/stream?scope=cluster", nil)
+	srv.handleDiagnoseStream(httptest.NewRecorder(), req)
+
+	recs := srv.diagnoses.list("Cluster", "", "")
+	if len(recs) != 1 {
+		t.Fatalf("cluster-scope diagnoses = %d, want 1", len(recs))
+	}
+	if recs[0].Status != "done" {
+		t.Errorf("status = %q, want done", recs[0].Status)
+	}
+}
+
+func TestHandleDiagnoseStream_ScopeValidation(t *testing.T) {
+	mock := mockOpenSREWithResult(t)
+	defer mock.Close()
+	srv := New(Config{DevMode: true, OpenSREURL: mock.URL, OpenSREToken: "k"})
+
+	// scope=namespace without a namespace → error frame.
+	rec := httptest.NewRecorder()
+	srv.handleDiagnoseStream(rec, httptest.NewRequest(http.MethodGet, "/api/diagnose/stream?scope=namespace", nil))
+	if !strings.Contains(rec.Body.String(), "event: error") || !strings.Contains(rec.Body.String(), "namespace is required") {
+		t.Errorf("expected namespace-required error frame:\n%s", rec.Body.String())
+	}
+
+	// invalid scope → error frame.
+	rec = httptest.NewRecorder()
+	srv.handleDiagnoseStream(rec, httptest.NewRequest(http.MethodGet, "/api/diagnose/stream?scope=bogus", nil))
+	if !strings.Contains(rec.Body.String(), "invalid scope") {
+		t.Errorf("expected invalid-scope error frame:\n%s", rec.Body.String())
+	}
+}
+
 // mockOpenSREWithResult emits a final publish_findings frame so the persisted
 // record captures the structured result.
 func mockOpenSREWithResult(t *testing.T) *httptest.Server {

@@ -13,8 +13,9 @@ import { CostCard } from './CostCard'
 import { GitOpsControllersCard } from './GitOpsControllersCard'
 import { AuditCard, PaneLoader, StatusDot, mapHealthToTone } from '@skyhook-io/k8s-ui'
 import { ClusterHealthCard } from './ClusterHealthCard'
-import { AlertTriangle, Loader2, Shield } from 'lucide-react'
+import { AlertTriangle, Loader2, Shield, Sparkles } from 'lucide-react'
 import { clsx } from 'clsx'
+import { useDiagnoseLauncher } from '../diagnose/DiagnosePanel'
 
 interface HomeViewProps {
   namespaces: string[]
@@ -44,6 +45,7 @@ export function HomeView({ namespaces, topology, onNavigateToView, onNavigateToR
   // CRDs and Helm load lazily after main dashboard to keep initial load fast
   const { data: crdsData } = useDashboardCRDs(namespaces)
   const { data: helmData } = useDashboardHelm(namespaces)
+  const diagnose = useDiagnoseLauncher()
 
   if (isLoading) {
     return <PaneLoader label="Loading dashboard…" className="flex-1" />
@@ -80,6 +82,18 @@ export function HomeView({ namespaces, topology, onNavigateToView, onNavigateToR
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="max-w-[1600px] mx-auto px-6 py-6 space-y-6">
+        {diagnose.canDiagnoseWithAI && (
+          <div className="flex justify-end">
+            <button
+              onClick={() => diagnose.launchScope('cluster')}
+              className="flex items-center gap-1.5 rounded-lg border border-theme-border px-3 py-1.5 text-xs font-medium text-theme-text-primary hover:bg-theme-hover"
+              title="Investigate cluster-wide issues with OpenSRE AI SRE"
+            >
+              <Sparkles className="w-3.5 h-3.5" /> Diagnose cluster with AI
+            </button>
+          </div>
+        )}
+        {diagnose.panel}
         {stillLoading && (
           <div className="flex items-center gap-2 text-xs text-theme-text-tertiary">
             <Loader2 className="w-3 h-3 animate-spin" />

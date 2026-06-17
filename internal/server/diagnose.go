@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 
+	"github.com/skyhook-io/radar/internal/issues"
 	"github.com/skyhook-io/radar/internal/k8s"
 	"github.com/skyhook-io/radar/internal/opensre"
 )
@@ -79,15 +80,32 @@ func (s *Server) handleDiagnoseStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	if scope == "" {
+		scope = "resource"
+	}
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
 	namespace := strings.TrimSpace(r.URL.Query().Get("namespace"))
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	if kind == "" || name == "" {
-		sendError("kind and name are required.")
+	switch scope {
+	case "resource":
+		if kind == "" || name == "" {
+			sendError("kind and name are required.")
+			return
+		}
+	case "namespace":
+		if namespace == "" {
+			sendError("namespace is required for scope=namespace.")
+			return
+		}
+	case "cluster":
+		// no resource identity needed
+	default:
+		sendError("invalid scope (use resource, namespace, or cluster).")
 		return
 	}
 
-	envelope, alertName, severity := buildAlertEnvelope(kind, namespace, name, "user-initiated")
+	envelope, alertName, severity, recKind, recName := buildScopedEnvelope(scope, kind, namespace, name)
 	stream, err := s.opensreClient.InvestigateStream(r.Context(), opensre.InvestigateRequest{
 		RawAlert:     envelope,
 		AlertName:    alertName,
@@ -103,9 +121,9 @@ func (s *Server) handleDiagnoseStream(w http.ResponseWriter, r *http.Request) {
 	// record at the terminal state so it shows up in the resource's history.
 	rec := &DiagnosisRecord{
 		ID:        newDiagnosisID(),
-		Kind:      kind,
+		Kind:      recKind,
 		Namespace: namespace,
-		Name:      name,
+		Name:      recName,
 		Context:   k8s.GetContextName(),
 		CreatedAt: time.Now(),
 		Trigger:   "manual",
@@ -478,6 +496,90 @@ func buildAlertEnvelope(kind, namespace, name, detectedBy string) (map[string]an
 		target = namespace + "/" + name
 	}
 	alertName := fmt.Sprintf("%s: %s", label, target)
+	return envelope, alertName, severity
+}
+
+// buildScopedEnvelope dispatches envelope construction by scope. Resource scope
+// uses the single-resource envelope; namespace/cluster scope seed from Radar's
+// detected issues so OpenSRE can investigate "what's wrong here" broadly. Returns
+// the envelope, alert name, severity, and the kind/name to record under.
+func buildScopedEnvelope(scope, kind, namespace, name string) (
+	env map[string]any, alertName, severity, recKind, recName string,
+) {
+	switch scope {
+	case "cluster":
+		env, alertName, severity = scopedIssuesEnvelope("cluster", "")
+		return env, alertName, severity, "Cluster", k8s.GetContextName()
+	case "namespace":
+		env, alertName, severity = scopedIssuesEnvelope("namespace", namespace)
+		return env, alertName, severity, "Namespace", namespace
+	default:
+		env, alertName, severity = buildAlertEnvelope(kind, namespace, name, "user-initiated")
+		return env, alertName, severity, kind, name
+	}
+}
+
+// scopedIssuesEnvelope builds an alert envelope seeded from Radar's current
+// issues for a namespace or the whole cluster (bounded). OpenSRE uses this as a
+// starting picture and can drill in further via Radar's MCP tools (Direction A).
+func scopedIssuesEnvelope(scope, namespace string) (map[string]any, string, string) {
+	const maxIssues = 20
+	var list []issues.Issue
+	if provider := issues.NewCacheProvider(); provider != nil {
+		f := issues.Filters{
+			Severities: []issues.Severity{issues.SeverityCritical, issues.SeverityWarning},
+			Grouped:    true,
+			Limit:      maxIssues,
+		}
+		if scope == "namespace" && namespace != "" {
+			f.Namespaces = []string{namespace}
+		}
+		list, _ = issues.ComposeWithStats(provider, f)
+	}
+
+	hasCritical := false
+	items := make([]map[string]any, 0, len(list))
+	for _, iss := range list {
+		if iss.Severity == issues.SeverityCritical {
+			hasCritical = true
+		}
+		items = append(items, map[string]any{
+			"severity":  string(iss.Severity),
+			"category":  string(iss.Category),
+			"kind":      iss.Kind,
+			"namespace": iss.Namespace,
+			"name":      iss.Name,
+			"message":   iss.Message,
+		})
+	}
+	severity := "warning"
+	if hasCritical {
+		severity = "high"
+	}
+
+	scopeLabel := "the cluster"
+	if scope == "namespace" {
+		scopeLabel = "namespace " + namespace
+	}
+	envelope := map[string]any{
+		"source":          "radar",
+		"contractVersion": contractVersion,
+		"scope":           scope,
+		"cluster":         map[string]any{"context": k8s.GetContextName()},
+		"symptom": map[string]any{
+			"detectedBy": "user-initiated",
+			"summary":    fmt.Sprintf("%d issue(s) detected in %s", len(items), scopeLabel),
+		},
+		"issues": items,
+	}
+	if scope == "namespace" && namespace != "" {
+		envelope["namespace"] = namespace
+	}
+
+	alertName := fmt.Sprintf("Cluster health: %d issue(s)", len(items))
+	if scope == "namespace" {
+		alertName = fmt.Sprintf("Namespace %s: %d issue(s)", namespace, len(items))
+	}
 	return envelope, alertName, severity
 }
 

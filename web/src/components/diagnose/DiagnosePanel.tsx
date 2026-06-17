@@ -23,9 +23,18 @@ import { useCanDiagnoseWithAI, useCanRemediate, useCapabilitiesContext } from '.
 import { Markdown } from '../ui/Markdown'
 
 export interface DiagnoseTarget {
-  kind: string
-  namespace: string
-  name: string
+  scope?: 'resource' | 'namespace' | 'cluster'
+  kind?: string
+  namespace?: string
+  name?: string
+}
+
+// Display title for a target, scope-aware.
+function targetTitle(t: DiagnoseTarget): { kind: string; name: string } {
+  const scope = t.scope || 'resource'
+  if (scope === 'cluster') return { kind: 'Cluster', name: '' }
+  if (scope === 'namespace') return { kind: 'Namespace', name: t.namespace || '' }
+  return { kind: t.kind || '', name: t.name || '' }
 }
 
 type DiagnoseStatus = 'streaming' | 'done' | 'noise' | 'error'
@@ -106,7 +115,12 @@ function useDiagnoseStream(target: DiagnoseTarget | null): DiagnoseState {
       return
     }
     setState(INITIAL)
-    const es = createDiagnoseStream(target.kind, target.namespace, target.name)
+    const es = createDiagnoseStream({
+      scope: target.scope,
+      kind: target.kind,
+      namespace: target.namespace,
+      name: target.name,
+    })
     let done = false
     const finish = (patch: Partial<DiagnoseState>) => {
       done = true
@@ -168,7 +182,7 @@ function useDiagnoseStream(target: DiagnoseTarget | null): DiagnoseState {
       done = true
       es.close()
     }
-  }, [target?.kind, target?.namespace, target?.name, queryClient])
+  }, [target?.scope, target?.kind, target?.namespace, target?.name, queryClient])
 
   return state
 }
@@ -189,9 +203,10 @@ interface DiagnoseVM {
 }
 
 function vmFromLive(state: DiagnoseState, target: DiagnoseTarget): DiagnoseVM {
+  const title = targetTitle(target)
   return {
-    titleKind: target.kind,
-    titleName: target.name,
+    titleKind: title.kind,
+    titleName: title.name,
     streaming: state.status === 'streaming',
     status: state.status,
     error: state.error,
@@ -515,7 +530,8 @@ function DiagnosePanel({
           <div className="flex items-center gap-2 min-w-0">
             <Sparkles className="w-4 h-4 text-theme-text-secondary shrink-0" />
             <h3 className="text-base font-semibold text-theme-text-primary truncate">
-              AI Diagnosis — {vm.titleKind}/{vm.titleName}
+              AI Diagnosis — {vm.titleKind}
+              {vm.titleName ? `/${vm.titleName}` : ''}
             </h3>
             {vm.isNoise && (
               <span className="shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-medium text-amber-400">
@@ -611,6 +627,8 @@ function DiagnosePanel({
 export interface DiagnoseLauncher {
   /** Wire into ResourceActionsBar's `onDiagnose` prop (starts a live investigation). */
   onDiagnose: (params: DiagnoseTarget) => void
+  /** Start a cluster- or namespace-scoped investigation (seeded from Radar issues). */
+  launchScope: (scope: 'cluster' | 'namespace', namespace?: string) => void
   /** Open a stored diagnosis read-only (from the history list). */
   openRecord: (record: DiagnosisRecord) => void
   /** Wire into ResourceActionsBar's `canDiagnoseWithAI` prop. */
@@ -630,7 +648,11 @@ export function useDiagnoseLauncher(): DiagnoseLauncher {
   const [record, setRecord] = useState<DiagnosisRecord | null>(null)
   const onDiagnose = useCallback((params: DiagnoseTarget) => {
     setRecord(null)
-    setTarget(params)
+    setTarget({ ...params, scope: params.scope ?? 'resource' })
+  }, [])
+  const launchScope = useCallback((scope: 'cluster' | 'namespace', namespace?: string) => {
+    setRecord(null)
+    setTarget({ scope, namespace })
   }, [])
   const openRecord = useCallback((rec: DiagnosisRecord) => {
     setTarget(null)
@@ -643,6 +665,7 @@ export function useDiagnoseLauncher(): DiagnoseLauncher {
 
   return {
     onDiagnose,
+    launchScope,
     openRecord,
     canDiagnoseWithAI,
     isDiagnosing: target !== null,
